@@ -5,7 +5,7 @@
 Add the trace module dependency:
 
 ```scala
-libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "0.1-a460256-20260517T074707Z-SNAPSHOT"
+libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "0.1-a460256-20260517T073136Z-SNAPSHOT"
 ```
 
 Create normal `fs2-kafka` producer settings first:
@@ -26,7 +26,7 @@ val producerSettings: ProducerSettings[IO, String, String] =
 
 def createTracedProducer(
     implicit tracerProvider: TracerProvider[IO]
-): Resource[IO, TracedKafkaProducer[IO, String, String]] = 
+): Resource[IO, TracedKafkaProducer[IO, String, String]] =
   for {
     tracer <- Resource.eval(KafkaTracer.create[IO](KafkaTracer.Config.default))
     // create normal producer
@@ -47,7 +47,8 @@ val tracerConfig: KafkaTracer.Config =
 
 ## How To Use It
 
-Bind a `KafkaTracer` to a concrete `KafkaProducer.WithSettings`, then call the traced producer exactly like the normal fs2-kafka producer.
+Bind a `KafkaTracer` to a concrete `KafkaProducer.WithSettings`, then call the traced producer exactly like the normal
+fs2-kafka producer.
 
 The important part is that `produce` keeps the original fs2-kafka two-stage contract:
 
@@ -123,7 +124,8 @@ That is the simplest way to keep span lifetime aligned with Kafka acknowledgemen
 
 ### Reuse one traced producer per bound Kafka producer
 
-Create the `TracedKafkaProducer` once from the real producer resource and pass it through your application, instead of rebuilding it for every send.
+Create the `TracedKafkaProducer` once from the real producer resource and pass it through your application, instead of
+rebuilding it for every send.
 
 ### Define `KafkaMessageKey` for domain keys
 
@@ -142,13 +144,16 @@ Return `None` when the key should not be exposed as telemetry.
 
 ### Use `injectHeaders` when send and publish are decoupled
 
-If you send records through a `TracedKafkaProducer`, trace headers are injected automatically during traced `produce` calls. You do not need to call `injectHeaders` in the normal send path.
+If you send records through a `TracedKafkaProducer`, trace headers are injected automatically during traced `produce`
+calls. You do not need to call `injectHeaders` in the normal send path.
 
-Use `injectHeaders` only when record construction and record publication are decoupled, for example when you need to prepare a record now and hand it off to some later send path while preserving the current tracing context.
+Use `injectHeaders` only when record construction and record publication are decoupled, for example when you need to
+prepare a record now and hand it off to some later send path while preserving the current tracing context.
 
 ### Configure stable endpoint attributes explicitly
 
-`server.address` and `server.port` are not inferred from Kafka client internals. If you want them on spans, configure them through `KafkaTracer.Config`.
+`server.address` and `server.port` are not inferred from Kafka client internals. If you want them on spans, configure
+them through `KafkaTracer.Config`.
 
 ## Pitfalls And Caveats
 
@@ -189,11 +194,13 @@ There is no consumer tracing API in this repository yet.
 
 ### Duplicate propagation headers use last-match extraction
 
-When multiple Kafka headers share the same propagation key, extraction prefers the last matching value. This matches OpenTelemetry Java Kafka instrumentation rather than the generic first-value propagator rule.
+When multiple Kafka headers share the same propagation key, extraction prefers the last matching value. This matches
+OpenTelemetry Java Kafka instrumentation rather than the generic first-value propagator rule.
 
 ### Existing propagated context is preserved
 
-`injectHeaders` does not overwrite a recognized existing propagation context. If the record already carries trace headers, those headers continue to define the message creation context.
+`injectHeaders` does not overwrite a recognized existing propagation context. If the record already carries trace
+headers, those headers continue to define the message creation context.
 
 ### Batch sends change span shape
 
