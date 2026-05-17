@@ -18,11 +18,10 @@ import scala.util.chaining._
 /** A tracing handle bound to a specific [[fs2.kafka.KafkaProducer]].
   *
   * This handle keeps producer-specific tracing helpers explicit while still implementing [[fs2.kafka.KafkaProducer]].
-  * Use [[underlying]] when you need the raw producer, including the original two-stage `produce` contract without
-  * tracing.
+  * The traced `produce` implementation preserves fs2-kafka's original two-stage contract.
   *
-  * Prefer the awaited traced send operations on this handle when you want emitted `send` spans to line up with Kafka
-  * send completion more closely.
+  * To ensure emitted `send` spans are finalized, callers should evaluate the returned await effect, for example via
+  * `producer.produce(records).flatten`.
   */
 trait TracedKafkaProducer[F[_], K, V] extends KafkaProducer.WithSettings[F, K, V] {
 

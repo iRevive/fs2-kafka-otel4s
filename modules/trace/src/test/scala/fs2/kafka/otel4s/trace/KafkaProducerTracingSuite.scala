@@ -19,7 +19,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
 
   final class UnrepresentableKey(val value: String)
 
-  test("produceAwaited injects tracing headers and emits a send span") {
+  test("produce(...).flatten injects tracing headers and emits a send span") {
     KafkaTracerTestkit
       .create()
       .use { testkit =>
@@ -58,19 +58,19 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
       }
   }
 
-  test("produceAwaited and produceOneAwaited complete traced sends in one effect") {
+  test("produce(...).flatten completes traced sends in one effect") {
     KafkaTracerTestkit
       .create()
       .use { testkit =>
         for {
           producer <- StubKafkaProducer.recorder[String, String]()
           tracedProducer <- testkit.tracedProducer(producer)
-          _ <- tracedProducer.produceAwaited(
-            ProducerRecords.one(ProducerRecord("topic-a", "key-a", "value-a"))
-          )
-          _ <- tracedProducer.produceOneAwaited(
-            ProducerRecord("topic-b", "key-b", "value-b")
-          )
+          _ <- tracedProducer
+            .produce(ProducerRecords.one(ProducerRecord("topic-a", "key-a", "value-a")))
+            .flatten
+          _ <- tracedProducer
+            .produce(ProducerRecords.one(ProducerRecord("topic-b", "key-b", "value-b")))
+            .flatten
           completionCount <- producer.getCompletions
           produced <- producer.getCaptured
           spans <- testkit.finishedSpans
@@ -98,7 +98,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
           tracedProducer <- testkit.tracedProducer[String, String](
             StubKafkaProducer.metadataOnly("producer-client")
           )
-          _ <- tracedProducer.produceOneAwaited(ProducerRecord("topic", "key", "value"))
+          _ <- tracedProducer.produce(ProducerRecords.one(ProducerRecord("topic", "key", "value"))).flatten
           spans <- testkit.finishedSpans
           _ <- IO {
             assertExpected(
@@ -131,7 +131,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
             ProducerRecord("topic-a", "key-a", "value-a"),
             ProducerRecord("topic-b", "key-b", null.asInstanceOf[String]).withPartition(3)
           )
-          _ <- tracedProducer.produceAwaited(records)
+          _ <- tracedProducer.produce(records).flatten
           produced <- producer.getCaptured
           spans <- testkit.finishedSpans
           _ <- IO {
@@ -192,7 +192,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
             ProducerRecord("topic-a", "key-a", "value-a").withPartition(0),
             ProducerRecord("topic-b", "key-b", "value-b").withPartition(0)
           )
-          _ <- tracedProducer.produceAwaited(records)
+          _ <- tracedProducer.produce(records).flatten
           spans <- testkit.finishedSpans
           _ <- IO {
             assertExpected(
@@ -241,9 +241,9 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
         for {
           producer <- StubKafkaProducer.recorder[String, String]()
           tracedProducer <- testkit.tracedProducer(producer, config)
-          _ <- tracedProducer.produceAwaited(
-            ProducerRecords.one(ProducerRecord("topic", "key", "value"))
-          )
+          _ <- tracedProducer
+            .produce(ProducerRecords.one(ProducerRecord("topic", "key", "value")))
+            .flatten
           spans <- testkit.finishedSpans
           _ <- IO {
             assertExpected(
@@ -273,9 +273,9 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
           producerTracer <- testkit.tracedProducer[String, String](
             StubKafkaProducer.metadataOnly("producer-client")
           )
-          _ <- producerTracer.produceAwaited(
-            ProducerRecords.one(ProducerRecord("topic", "key", "value"))
-          )
+          _ <- producerTracer
+            .produce(ProducerRecords.one(ProducerRecord("topic", "key", "value")))
+            .flatten
           spans <- testkit.finishedSpans
           _ <- IO {
             assertExpected(
@@ -315,12 +315,12 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
           badProducerTracer <- testkit.tracedProducer[UnrepresentableKey, String](badProducer)
           _ <- stringProducerTracer.produce(
             ProducerRecords.one(ProducerRecord("topic", null.asInstanceOf[String], "value"))
-          )
+          ).flatten
           _ <- badProducerTracer.produce(
             ProducerRecords.one(
               ProducerRecord("topic", new UnrepresentableKey("secret"), "value")
             )
-          )
+          ).flatten
           spans <- testkit.finishedSpans
           _ <- IO {
             assertExpected(
@@ -362,9 +362,9 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
         for {
           producer <- StubKafkaProducer.recorder[String, String]()
           producerTracer <- testkit.tracedProducer[String, String](producer)
-          _ <- producerTracer.produceAwaited(
-            ProducerRecords.one(ProducerRecord("topic", "key", null.asInstanceOf[String]))
-          )
+          _ <- producerTracer
+            .produce(ProducerRecords.one(ProducerRecord("topic", "key", null.asInstanceOf[String])))
+            .flatten
           spans <- testkit.finishedSpans
           _ <- IO {
             assertExpected(

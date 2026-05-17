@@ -17,12 +17,13 @@ final class KafkaTracingErrorSuite extends KafkaTracingTestSupport {
       .use { testkit =>
         for {
           tracedProducer <- testkit.tracedProducer(
-            StubKafkaProducer.failingAwait[String, String](
-              new RuntimeException("send failed")
-            )
-          )
+                              StubKafkaProducer.failingAwait[String, String](
+                                new RuntimeException("send failed")
+                              )
+                            )
           result <- tracedProducer
-            .produceAwaited(ProducerRecords.one(ProducerRecord("topic", "key", "value")))
+            .produce(ProducerRecords.one(ProducerRecord("topic", "key", "value")))
+            .flatten
             .attempt
           spans <- testkit.finishedSpans
           _ <- IO {

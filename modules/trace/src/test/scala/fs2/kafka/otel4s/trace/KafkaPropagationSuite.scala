@@ -93,7 +93,7 @@ final class KafkaPropagationSuite extends KafkaTracingTestSupport {
           originalTraceparent = TextMapGetter[Headers]
             .get(prepared.headers, "traceparent")
             .getOrElse(fail("missing prepared traceparent"))
-          _ <- tracedProducer.produceOneAwaited(prepared)
+          _ <- tracedProducer.produce(ProducerRecords.one(prepared)).flatten
           produced <- producer.getCaptured
           spans <- testkit.finishedSpans
           _ <- IO {

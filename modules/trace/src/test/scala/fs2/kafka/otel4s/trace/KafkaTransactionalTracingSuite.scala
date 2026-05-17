@@ -12,31 +12,49 @@ import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimenta
 
 final class KafkaTransactionalTracingSuite extends KafkaTracingTestSupport {
 
-  test("the underlying producer remains available for the two-phase producer contract") {
+  test("two-stage traced produce leaks send-span finalization until the await effect runs") {
     KafkaTracerTestkit
       .create()
       .use { testkit =>
         for {
           producer <- StubKafkaProducer.recorder[String, String]()
           tracedProducer <- testkit.tracedProducer(producer)
-          prepared <- tracedProducer.injectHeaders(ProducerRecord("topic", "key", "value"))
-          staged <- tracedProducer.underlying.produce(
-            ProducerRecords.one(prepared)
+          leakedAwait <- tracedProducer.produce(
+            ProducerRecords.one(ProducerRecord("topic-a", "key-a", "value-a"))
           )
           producedAfterOuter <- producer.getCaptured
           completionsAfterOuter <- producer.getCompletions
           spansAfterOuter <- testkit.finishedSpans
-          _ <- staged
-          completionsAfterInner <- producer.getCompletions
-          spansAfterInner <- testkit.finishedSpans
+          _ <- tracedProducer
+            .produce(ProducerRecords.one(ProducerRecord("topic-b", "key-b", "value-b")))
+            .flatten
+          completionsAfterCompleted <- producer.getCompletions
+          spansAfterCompleted <- testkit.finishedSpans
+          _ <- leakedAwait
+          completionsAfterLeakedAwait <- producer.getCompletions
+          spansAfterLeakedAwait <- testkit.finishedSpans
           _ <- IO {
-            assertEquals(producedAfterOuter.size, 1)
-            assertEquals(producedAfterOuter.head.get.topic, "topic")
-            assertEquals(completionsAfterOuter, 0)
-            assertEquals(completionsAfterInner, 1)
-            assertEquals(spansAfterOuter, Nil)
-            assertEquals(spansAfterInner, Nil)
-          }
+                 assertEquals(producedAfterOuter.size, 1)
+                 assertEquals(producedAfterOuter.head.get.topic, "topic-a")
+                 assert(producedAfterOuter.head.get.headers.toChain.nonEmpty)
+                 assertEquals(completionsAfterOuter, 0)
+                 assertEquals(spansAfterOuter, Nil)
+                 assertEquals(completionsAfterCompleted, 1)
+                 assertExpected(
+                   spansAfterCompleted,
+                   TraceForestExpectation.unordered(
+                     root(SpanExpectation.producer("send topic-b").scopeName("fs2.kafka"))
+                   )
+                 )
+                 assertEquals(completionsAfterLeakedAwait, 2)
+                 assertExpected(
+                   spansAfterLeakedAwait,
+                   TraceForestExpectation.unordered(
+                     root(SpanExpectation.producer("send topic-a").scopeName("fs2.kafka")),
+                     root(SpanExpectation.producer("send topic-b").scopeName("fs2.kafka"))
+                   )
+                 )
+               }
         } yield ()
       }
   }

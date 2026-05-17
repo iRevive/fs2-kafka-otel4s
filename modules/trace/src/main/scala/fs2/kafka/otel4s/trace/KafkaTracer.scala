@@ -25,8 +25,8 @@ trait KafkaTracer[F[_]] {
 
   /** Creates a producer-bound tracing handle.
     *
-    * The handle captures static producer metadata such as `client.id` from the producer itself and offers explicit
-    * awaited traced-produce operations plus access to the underlying producer when the lower-level API is needed.
+    * The handle captures static producer metadata such as `client.id` from the producer itself and traces the
+    * producer's standard two-stage `produce` operations.
     */
   def producer[K: KafkaMessageKey, V](
       producer: KafkaProducer.WithSettings[F, K, V]
