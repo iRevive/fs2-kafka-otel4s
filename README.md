@@ -142,6 +142,29 @@ implicit val orderIdKafkaMessageKey: KafkaMessageKey[OrderId] =
 
 Return `None` when the key should not be exposed as telemetry.
 
+### Prefer `tracedWithSerializers` over `withSerializers`
+
+If you need to change serializers on a traced producer and the key type changes, use `tracedWithSerializers`.
+
+```scala
+import fs2.kafka.otel4s.trace.{KafkaMessageKey, TracedKafkaProducer}
+
+final class RemappedKey(val value: String)
+
+implicit val remappedKeyMessageKey: KafkaMessageKey[RemappedKey] =
+  KafkaMessageKey.instance(key => Some(s"remapped:${key.value}"))
+
+def remapSerializers(
+    producer: TracedKafkaProducer[IO, String, String]
+): TracedKafkaProducer[IO, RemappedKey, String] =
+  producer.tracedWithSerializers(
+    Serializer[IO, String].contramap[RemappedKey](_.value),
+    Serializer[IO, String]
+  )
+```
+
+That keeps tracing semantics for the new key type, including `messaging.kafka.message.key`.
+
 ### Use `injectHeaders` when send and publish are decoupled
 
 If you send records through a `TracedKafkaProducer`, trace headers are injected automatically during traced `produce`
@@ -201,6 +224,17 @@ OpenTelemetry Java Kafka instrumentation rather than the generic first-value pro
 
 `injectHeaders` does not overwrite a recognized existing propagation context. If the record already carries trace
 headers, those headers continue to define the message creation context.
+
+### `withSerializers` is deprecated on traced producers
+
+`withSerializers` is still available because `TracedKafkaProducer` extends the fs2-kafka producer API, but it is not
+the safe traced path when the key type changes.
+
+- tracing still works
+- spans are still emitted
+- `messaging.kafka.message.key` derivation is dropped for the new key type
+
+Use `tracedWithSerializers` instead if you want to preserve key-aware tracing behavior.
 
 ### Batch sends change span shape
 

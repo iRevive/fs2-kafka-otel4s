@@ -36,10 +36,33 @@ trait TracedKafkaProducer[F[_], K, V] extends KafkaProducer.WithSettings[F, K, V
     */
   def injectHeaders(records: ProducerRecords[K, V]): F[ProducerRecords[K, V]]
 
+  /** Switches serializers while preserving tracing semantics for the new key type.
+    *
+    * Prefer this method over [[withSerializers]] when working with traced producers. It requires a new
+    * [[KafkaMessageKey]] instance so producer span attributes such as `messaging.kafka.message.key` can continue to be
+    * derived safely after the key type changes.
+    */
   def tracedWithSerializers[K2: KafkaMessageKey, V2](
       keySerializer: KeySerializer[F, K2],
       valueSerializer: ValueSerializer[F, V2]
   ): TracedKafkaProducer[F, K2, V2]
+
+  /** Switches serializers but drops traced key-attribute derivation for the new key type.
+    *
+    * This method exists because [[TracedKafkaProducer]] extends fs2-kafka's producer API, but it is not the preferred
+    * traced path. After the key type changes, the implementation falls back to a no-op [[KafkaMessageKey]], so spans
+    * will continue to be emitted but `messaging.kafka.message.key` will no longer be derived automatically.
+    *
+    * Use [[tracedWithSerializers]] instead when you want to preserve full traced-producer behavior.
+    */
+  @deprecated(
+    "Use tracedWithSerializers instead. withSerializers keeps tracing but drops KafkaMessageKey-based key extraction for the new key type.",
+    since = "0.1"
+  )
+  override def withSerializers[K2, V2](
+      keySerializer: KeySerializer[F, K2],
+      valueSerializer: ValueSerializer[F, V2]
+  ): KafkaProducer.WithSettings[F, K2, V2]
 }
 
 object TracedKafkaProducer {
@@ -213,7 +236,6 @@ object TracedKafkaProducer {
       )
     }
 
-    // todo: add test that where the key type changes
     override def tracedWithSerializers[K2: KafkaMessageKey, V2](
         keySerializer: KeySerializer[F, K2],
         valueSerializer: ValueSerializer[F, V2]

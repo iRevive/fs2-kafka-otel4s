@@ -15,9 +15,21 @@ import org.typelevel.otel4s.context.propagation.TextMapGetter
 import org.typelevel.otel4s.semconv.attributes.ServerAttributes
 import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
 
+import scala.annotation.nowarn
+
 final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
 
   final class UnrepresentableKey(val value: String)
+  final class WrappedKey(val value: String)
+
+  @nowarn("msg=method withSerializers in trait TracedKafkaProducer is deprecated")
+  private def remapWithSerializers(
+      producer: TracedKafkaProducer[IO, String, String]
+  ): KafkaProducer.WithSettings[IO, WrappedKey, String] =
+    producer.withSerializers(
+      Serializer[IO, String].contramap[WrappedKey](_.value),
+      Serializer[IO, String]
+    )
 
   test("produce(...).flatten injects tracing headers and emits a send span") {
     KafkaTracerTestkit
@@ -376,6 +388,86 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
                     .scopeName("fs2.kafka")
                     .attributesSubset(
                       MessagingExperimentalAttributes.MessagingKafkaMessageTombstone(true)
+                    )
+                )
+              )
+            )
+          }
+        } yield ()
+      }
+  }
+
+  test("tracedWithSerializers preserves tracing with a changed key type") {
+    KafkaTracerTestkit
+      .create()
+      .use { testkit =>
+        implicit val wrappedKeyMessageKey: KafkaMessageKey[WrappedKey] =
+          KafkaMessageKey.instance(key => Some(s"wrapped:${key.value}"))
+
+        for {
+          producer <- StubKafkaProducer.recorder[String, String]()
+          tracedProducer <- testkit.tracedProducer(producer)
+          remapped = tracedProducer.tracedWithSerializers(
+            Serializer[IO, String].contramap[WrappedKey](_.value),
+            Serializer[IO, String]
+          )
+          _ <- remapped
+            .produce(
+              ProducerRecords.one(
+                ProducerRecord("topic", new WrappedKey("key"), "value")
+              )
+            )
+            .flatten
+          spans <- testkit.finishedSpans
+          _ <- IO {
+            assertExpected(
+              spans,
+              TraceForestExpectation.unordered(
+                root(
+                  SpanExpectation
+                    .producer("send topic")
+                    .scopeName("fs2.kafka")
+                    .attributesSubset(
+                      MessagingExperimentalAttributes.MessagingKafkaMessageKey("wrapped:key")
+                    )
+                )
+              )
+            )
+          }
+        } yield ()
+      }
+  }
+
+  test("withSerializers preserves tracing but drops message-key extraction for a changed key type") {
+    KafkaTracerTestkit
+      .create()
+      .use { testkit =>
+        for {
+          producer <- StubKafkaProducer.recorder[String, String]()
+          tracedProducer <- testkit.tracedProducer(producer)
+          remapped = remapWithSerializers(tracedProducer)
+          _ <- remapped
+            .produce(
+              ProducerRecords.one(
+                ProducerRecord("topic", new WrappedKey("key"), "value")
+              )
+            )
+            .flatten
+          spans <- testkit.finishedSpans
+          _ <- IO {
+            assertExpected(
+              spans,
+              TraceForestExpectation.unordered(
+                root(
+                  SpanExpectation
+                    .producer("send topic")
+                    .scopeName("fs2.kafka")
+                    .attributes(
+                      AttributesExpectation.where(
+                        "must omit message key after withSerializers changes the key type"
+                      )(
+                        _.get(MessagingExperimentalAttributes.MessagingKafkaMessageKey).isEmpty
+                      )
                     )
                 )
               )
