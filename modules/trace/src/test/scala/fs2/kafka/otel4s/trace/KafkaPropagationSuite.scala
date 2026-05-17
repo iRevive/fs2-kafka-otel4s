@@ -78,6 +78,28 @@ final class KafkaPropagationSuite extends KafkaTracingTestSupport {
     assertEquals(headers.toChain.iterator.count(_.key == "baggage"), 2)
   }
 
+  test("headers text map updater collapses duplicate values for the updated key to one latest value") {
+    val headers =
+      TextMapUpdater[Headers].updated(
+        Headers.fromSeq(
+          Seq(
+            Header("traceparent", "first"),
+            Header("traceparent", "second"),
+            Header("other", "value")
+          )
+        ),
+        "traceparent",
+        "final"
+      )
+
+    assertEquals(
+      TextMapGetter[Headers].get(headers, "traceparent"),
+      Some("final")
+    )
+    assertEquals(headers.toChain.iterator.count(_.key == "traceparent"), 1)
+    assertEquals(headers.toChain.iterator.count(_.key == "other"), 1)
+  }
+
   test("produce preserves an existing message creation context and links the send span to it") {
     KafkaTracerTestkit
       .create()
@@ -262,6 +284,83 @@ final class KafkaPropagationSuite extends KafkaTracingTestSupport {
               .getOrElse(fail("missing propagated traceparent"))
 
             assertNotEquals(traceparent, "00-not-a-valid-traceparent")
+            assertEquals(propagated.headers.toChain.iterator.count(_.key == "traceparent"), 1)
+          }
+        } yield ()
+      }
+  }
+
+  test("injectHeaders treats the last malformed duplicate as authoritative and replaces it") {
+    KafkaTracerTestkit
+      .create()
+      .use { testkit =>
+        val producerTracer =
+          testkit.tracedProducer[String, String](StubKafkaProducer.metadataOnly("producer-client"))
+
+        for {
+          tracedProducer <- producerTracer
+          validPrepared <- testkit.appTracer.rootSpan("valid-earlier-context").surround {
+            tracedProducer.injectHeaders(ProducerRecord("topic", "key", "value"))
+          }
+          validTraceparent = TextMapGetter[Headers]
+            .get(validPrepared.headers, "traceparent")
+            .getOrElse(fail("missing valid traceparent"))
+          duplicated = ProducerRecord("topic", "key", "value").withHeaders(
+            Headers.fromSeq(
+              Seq(
+                Header("traceparent", validTraceparent),
+                Header("traceparent", "00-not-a-valid-traceparent")
+              )
+            )
+          )
+          propagated <- testkit.appTracer.rootSpan("replacement-context").surround {
+            tracedProducer.injectHeaders(duplicated)
+          }
+          _ <- IO {
+            val traceparent = TextMapGetter[Headers]
+              .get(propagated.headers, "traceparent")
+              .getOrElse(fail("missing propagated traceparent"))
+
+            assertNotEquals(traceparent, validTraceparent)
+            assertNotEquals(traceparent, "00-not-a-valid-traceparent")
+            assertEquals(propagated.headers.toChain.iterator.count(_.key == "traceparent"), 1)
+          }
+        } yield ()
+      }
+  }
+
+  test("injectHeaders treats a trailing null duplicate as missing and injects the current context") {
+    KafkaTracerTestkit
+      .create()
+      .use { testkit =>
+        val producerTracer =
+          testkit.tracedProducer[String, String](StubKafkaProducer.metadataOnly("producer-client"))
+
+        for {
+          tracedProducer <- producerTracer
+          validPrepared <- testkit.appTracer.rootSpan("valid-earlier-context").surround {
+            tracedProducer.injectHeaders(ProducerRecord("topic", "key", "value"))
+          }
+          validTraceparent = TextMapGetter[Headers]
+            .get(validPrepared.headers, "traceparent")
+            .getOrElse(fail("missing valid traceparent"))
+          duplicated = ProducerRecord("topic", "key", "value").withHeaders(
+            Headers.fromSeq(
+              Seq(
+                Header("traceparent", validTraceparent),
+                Header("traceparent", null.asInstanceOf[Array[Byte]])
+              )
+            )
+          )
+          propagated <- testkit.appTracer.rootSpan("replacement-context").surround {
+            tracedProducer.injectHeaders(duplicated)
+          }
+          _ <- IO {
+            val traceparent = TextMapGetter[Headers]
+              .get(propagated.headers, "traceparent")
+              .getOrElse(fail("missing propagated traceparent"))
+
+            assertNotEquals(traceparent, validTraceparent)
             assertEquals(propagated.headers.toChain.iterator.count(_.key == "traceparent"), 1)
           }
         } yield ()
