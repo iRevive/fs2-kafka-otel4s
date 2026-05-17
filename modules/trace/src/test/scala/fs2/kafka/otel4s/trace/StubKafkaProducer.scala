@@ -1,6 +1,6 @@
 package fs2.kafka.otel4s.trace
 
-import cats.effect.{IO, Ref, Resource}
+import cats.effect.{Deferred, IO, Ref, Resource}
 import fs2.Chunk
 import fs2.kafka._
 import org.apache.kafka.clients.consumer.{ConsumerGroupMetadata, OffsetAndMetadata}
@@ -69,6 +69,14 @@ object StubKafkaProducer {
 
   }
 
+  trait GatedAwaitRecorder[K, V] extends Recorder[K, V] {
+
+    def awaitStarted: IO[Unit]
+    def awaitCanceled: IO[Unit]
+    def releaseAwait: IO[Unit]
+
+  }
+
   def metadataOnly[K, V](
       clientId: String = "producer-client"
   ): KafkaProducer.WithSettings[IO, K, V] =
@@ -90,7 +98,7 @@ object StubKafkaProducer {
                     0
                   )
 
-              record -> metadata
+                record -> metadata
             }
           )
         }
@@ -114,6 +122,37 @@ object StubKafkaProducer {
       override def produce(records: ProducerRecords[K, V]): IO[IO[ProducerResult[K, V]]] =
         IO.pure(IO.raiseError(cause))
     }
+
+  def failingOuter[K, V](
+      cause: Throwable,
+      clientId: String = "producer-client"
+  ): KafkaProducer.WithSettings[IO, K, V] =
+    new StubKafkaProducer[K, V](producerSettings[K, V](clientId)) {
+      override def produce(records: ProducerRecords[K, V]): IO[IO[ProducerResult[K, V]]] =
+        IO.raiseError(cause)
+    }
+
+  def gatedAwait[K, V](clientId: String = "producer-client"): IO[GatedAwaitRecorder[K, V]] =
+    for {
+      captured <- Ref[IO].of(Chunk.empty[ProducerRecord[K, V]])
+      completions <- Ref[IO].of(0)
+      transactionUses <- Ref[IO].of(0)
+      sentOffsets <- Ref[IO].of(
+        Vector.empty[(Map[TopicPartition, OffsetAndMetadata], ConsumerGroupMetadata)]
+      )
+      started <- Deferred[IO, Unit]
+      released <- Deferred[IO, Unit]
+      canceled <- Deferred[IO, Unit]
+    } yield new GatedAwaitRecorderImpl(
+      producerSettings(clientId),
+      captured,
+      completions,
+      transactionUses,
+      sentOffsets,
+      started,
+      released,
+      canceled
+    )
 
   private def producerSettings[K, V](clientId: String): ProducerSettings[IO, K, V] =
     ProducerSettings[IO, K, V](
@@ -173,6 +212,48 @@ object StubKafkaProducer {
         consumerGroupMetadata: ConsumerGroupMetadata
     ): IO[Unit] =
       sentOffsets.update(_ :+ (offsets -> consumerGroupMetadata))
+
+  }
+
+  private final class GatedAwaitRecorderImpl[K, V](
+      settings: ProducerSettings[IO, K, V],
+      captured: Ref[IO, Chunk[ProducerRecord[K, V]]],
+      completions: Ref[IO, Int],
+      transactionUses: Ref[IO, Int],
+      sentOffsets: Ref[IO, Vector[(Map[TopicPartition, OffsetAndMetadata], ConsumerGroupMetadata)]],
+      started: Deferred[IO, Unit],
+      released: Deferred[IO, Unit],
+      canceled: Deferred[IO, Unit]
+  ) extends StubKafkaProducer[K, V](settings)
+      with GatedAwaitRecorder[K, V] {
+
+    override def getCaptured: IO[Chunk[ProducerRecord[K, V]]] =
+      captured.get
+
+    override def getCompletions: IO[Int] =
+      completions.get
+
+    override def getTransactionUses: IO[Int] =
+      transactionUses.get
+
+    override def getSentOffsets: IO[Vector[(Map[TopicPartition, OffsetAndMetadata], ConsumerGroupMetadata)]] =
+      sentOffsets.get
+
+    override def awaitStarted: IO[Unit] =
+      started.get
+
+    override def awaitCanceled: IO[Unit] =
+      canceled.get
+
+    override def releaseAwait: IO[Unit] =
+      released.complete(()).void
+
+    override def produce(records: ProducerRecords[K, V]): IO[IO[ProducerResult[K, V]]] =
+      captured.set(records).as {
+        started.complete(()).void *>
+          released.get.onCancel(canceled.complete(()).void) *>
+          completions.update(_ + 1).as(Chunk.empty)
+      }
 
   }
 }

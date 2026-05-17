@@ -1,6 +1,6 @@
 package fs2.kafka.otel4s.trace
 
-import cats.effect.IO
+import cats.effect.{IO, Resource}
 import fs2.Chunk
 import fs2.kafka._
 import fs2.kafka.otel4s.trace.instances._
@@ -14,6 +14,8 @@ import org.typelevel.otel4s.oteljava.testkit.trace.{
 import org.typelevel.otel4s.context.propagation.TextMapGetter
 import org.typelevel.otel4s.semconv.attributes.ServerAttributes
 import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
+import org.typelevel.otel4s.trace.SpanFinalizer
+import org.typelevel.otel4s.Attributes
 
 import scala.annotation.nowarn
 
@@ -268,6 +270,104 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
                     .attributesSubset(
                       ServerAttributes.ServerAddress("kafka.internal"),
                       ServerAttributes.ServerPort(9092L)
+                    )
+                )
+              )
+            )
+          }
+        } yield ()
+      }
+  }
+
+  test("custom send span setup overrides span name, attributes, and finalization behavior") {
+    KafkaTracerTestkit
+      .create()
+      .use { testkit =>
+        val config =
+          KafkaTracer.Config.default
+            .withConstAttributes(
+              Attributes(
+                MessagingExperimentalAttributes.MessagingOperationType("configured")
+              )
+            )
+            .withSendSpanSetup { ctx =>
+              KafkaTracer.Config.SpanSetup(
+                spanName = s"publish ${ctx.topics.headOption.getOrElse("unknown")} ${ctx.recordCount}",
+                attributes = Attributes(
+                  MessagingExperimentalAttributes.MessagingOperationName("publish"),
+                  MessagingExperimentalAttributes.MessagingOperationType("publish")
+                ),
+                finalizationStrategy = {
+                  case Resource.ExitCase.Succeeded =>
+                    SpanFinalizer.addAttribute(
+                      MessagingExperimentalAttributes.MessagingBatchMessageCount(
+                        ctx.recordCount.toLong
+                      )
+                    )
+                }
+              )
+            }
+
+        for {
+          producer <- StubKafkaProducer.recorder[String, String]()
+          tracedProducer <- testkit.tracedProducer(producer, config)
+          _ <- tracedProducer
+            .produce(ProducerRecords.one(ProducerRecord("topic", "key", "value")))
+            .flatten
+          spans <- testkit.finishedSpans
+          _ <- IO {
+            assertExpected(
+              spans,
+              TraceForestExpectation.unordered(
+                root(
+                  SpanExpectation
+                    .producer("publish topic 1")
+                    .scopeName("fs2.kafka")
+                    .attributesSubset(
+                      MessagingExperimentalAttributes.MessagingOperationName("publish"),
+                      MessagingExperimentalAttributes.MessagingOperationType("publish"),
+                      MessagingExperimentalAttributes.MessagingBatchMessageCount(1L)
+                    )
+                )
+              )
+            )
+          }
+        } yield ()
+      }
+  }
+
+  test("constant attributes override derived producer attributes on send spans") {
+    KafkaTracerTestkit
+      .create()
+      .use { testkit =>
+        val config =
+          KafkaTracer.Config.default.withConstAttributes(
+            Attributes(
+              MessagingExperimentalAttributes.MessagingDestinationName("configured-topic"),
+              MessagingExperimentalAttributes.MessagingClientId("configured-client"),
+              MessagingExperimentalAttributes.MessagingOperationName("configured-send")
+            )
+          )
+
+        for {
+          producer <- StubKafkaProducer.recorder[String, String]()
+          tracedProducer <- testkit.tracedProducer(producer, config)
+          _ <- tracedProducer
+            .produce(ProducerRecords.one(ProducerRecord("actual-topic", "key", "value")))
+            .flatten
+          spans <- testkit.finishedSpans
+          _ <- IO {
+            assertExpected(
+              spans,
+              TraceForestExpectation.unordered(
+                root(
+                  SpanExpectation
+                    .producer("send actual-topic")
+                    .scopeName("fs2.kafka")
+                    .attributesSubset(
+                      MessagingExperimentalAttributes.MessagingDestinationName("configured-topic"),
+                      MessagingExperimentalAttributes.MessagingClientId("configured-client"),
+                      MessagingExperimentalAttributes.MessagingOperationName("configured-send")
                     )
                 )
               )
