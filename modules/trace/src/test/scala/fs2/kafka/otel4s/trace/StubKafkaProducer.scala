@@ -84,8 +84,7 @@ object StubKafkaProducer {
       override def produce(records: ProducerRecords[K, V]): IO[IO[ProducerResult[K, V]]] =
         IO.pure {
           IO.pure(
-            records
-              .zipWithIndex
+            records.zipWithIndex
               .map { case (record, index) =>
                 val partition = record.partition.getOrElse(0)
                 val metadata =
@@ -99,7 +98,7 @@ object StubKafkaProducer {
                   )
 
                 record -> metadata
-            }
+              }
           )
         }
     }

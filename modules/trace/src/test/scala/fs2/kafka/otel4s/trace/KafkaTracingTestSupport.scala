@@ -18,7 +18,7 @@ trait KafkaTracingTestSupport extends CatsEffectSuite {
   ): TraceExpectation =
     TraceExpectation.ordered(
       span.noParentSpanContext,
-      children*
+      children *
     )
 
   protected def assertExpected(

@@ -4,6 +4,7 @@ import cats.effect.{IO, Resource}
 import fs2.kafka.KafkaProducer
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator
 import io.opentelemetry.context.propagation.TextMapPropagator
+import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder
 import io.opentelemetry.sdk.trace.data.SpanData
 import org.typelevel.otel4s.oteljava.testkit.OtelJavaTestkit
 import org.typelevel.otel4s.trace.{Tracer, TracerProvider}
@@ -28,11 +29,13 @@ object KafkaTracerTestkit {
 
   def create(
       appTracerName: String = "fs2.kafka.otel4s.tests",
-      propagators: Seq[TextMapPropagator] = Seq(W3CTraceContextPropagator.getInstance())
+      propagators: Seq[TextMapPropagator] = Seq(W3CTraceContextPropagator.getInstance()),
+      tracerProviderCustomizer: SdkTracerProviderBuilder => SdkTracerProviderBuilder = identity
   ): Resource[IO, KafkaTracerTestkit] =
     OtelJavaTestkit
       .inMemory[IO](
-        _.addTextMapPropagators(propagators*)
+        _.addTextMapPropagators(propagators *)
+          .addTracerProviderCustomizer(tracerProviderCustomizer)
       )
       .evalMap { testkit =>
         for {

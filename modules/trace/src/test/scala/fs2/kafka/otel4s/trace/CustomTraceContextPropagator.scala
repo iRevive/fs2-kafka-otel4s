@@ -7,11 +7,7 @@ import io.opentelemetry.api.trace.{
   TraceState
 }
 import io.opentelemetry.context.Context
-import io.opentelemetry.context.propagation.{
-  TextMapGetter => OtelTextMapGetter,
-  TextMapPropagator,
-  TextMapSetter
-}
+import io.opentelemetry.context.propagation.{TextMapGetter => OtelTextMapGetter, TextMapPropagator, TextMapSetter}
 
 object CustomTraceContextPropagator extends TextMapPropagator {
 

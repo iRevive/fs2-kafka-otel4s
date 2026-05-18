@@ -297,13 +297,12 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
                   MessagingExperimentalAttributes.MessagingOperationName("publish"),
                   MessagingExperimentalAttributes.MessagingOperationType("publish")
                 ),
-                finalizationStrategy = {
-                  case Resource.ExitCase.Succeeded =>
-                    SpanFinalizer.addAttribute(
-                      MessagingExperimentalAttributes.MessagingBatchMessageCount(
-                        ctx.recordCount.toLong
-                      )
+                finalizationStrategy = { case Resource.ExitCase.Succeeded =>
+                  SpanFinalizer.addAttribute(
+                    MessagingExperimentalAttributes.MessagingBatchMessageCount(
+                      ctx.recordCount.toLong
                     )
+                  )
                 }
               )
             }
@@ -425,14 +424,18 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
           badProducer <- StubKafkaProducer.recorder[UnrepresentableKey, String]()
           stringProducerTracer <- testkit.tracedProducer[String, String](nullProducer)
           badProducerTracer <- testkit.tracedProducer[UnrepresentableKey, String](badProducer)
-          _ <- stringProducerTracer.produce(
-            ProducerRecords.one(ProducerRecord("topic", null.asInstanceOf[String], "value"))
-          ).flatten
-          _ <- badProducerTracer.produce(
-            ProducerRecords.one(
-              ProducerRecord("topic", new UnrepresentableKey("secret"), "value")
+          _ <- stringProducerTracer
+            .produce(
+              ProducerRecords.one(ProducerRecord("topic", null.asInstanceOf[String], "value"))
             )
-          ).flatten
+            .flatten
+          _ <- badProducerTracer
+            .produce(
+              ProducerRecords.one(
+                ProducerRecord("topic", new UnrepresentableKey("secret"), "value")
+              )
+            )
+            .flatten
           spans <- testkit.finishedSpans
           _ <- IO {
             assertExpected(

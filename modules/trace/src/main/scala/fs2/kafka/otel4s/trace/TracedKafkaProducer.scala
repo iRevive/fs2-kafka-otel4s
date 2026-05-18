@@ -91,7 +91,7 @@ object TracedKafkaProducer {
       if (records.isEmpty) {
         underlying.produce(records)
       } else {
-        prepareBatch(records).flatMap { prepared =>
+        prepareBatch(records).allocatedCase.flatMap { case (prepared, releasePrepared) =>
           val spanContext = Semconv.sendSpanContext(underlying.settings, prepared.records)
           val spanSetup = config.sendSpanSetup(spanContext)
 
@@ -119,33 +119,32 @@ object TracedKafkaProducer {
                   if (prepared.sendKind == SpanKind.Producer)
                     prepared.records
                       .traverse(record => injectHeaders(record))
-                      .flatMap(underlying.produce(_))
+                      .flatMap(record => underlying.produce(record))
                   else
                     underlying.produce(prepared.records)
 
                 poll(res.trace(outerProduce))
                   .guaranteeCase {
                     case Outcome.Succeeded(_) =>
-                      prepared.releaseCreateSpans(Resource.ExitCase.Succeeded)
+                      releasePrepared(Resource.ExitCase.Succeeded)
                     case Outcome.Errored(e) =>
-                      prepared.releaseCreateSpans(Resource.ExitCase.Errored(e)) *>
+                      releasePrepared(Resource.ExitCase.Errored(e)) *>
                         release(Resource.ExitCase.Errored(e))
                     case Outcome.Canceled() =>
-                      prepared.releaseCreateSpans(Resource.ExitCase.Canceled) *>
+                      releasePrepared(Resource.ExitCase.Canceled) *>
                         release(Resource.ExitCase.Canceled)
                   }
                   .map { awaitResult =>
-                    MonadCancelThrow[F].guaranteeCase(
-                      res
-                        .trace(awaitResult)
-                        .flatTap { result =>
-                          res.span.addAttributes(Semconv.sendResultAttributes(result))
-                        }
-                    ) {
-                      case Outcome.Succeeded(_) => release(Resource.ExitCase.Succeeded)
-                      case Outcome.Errored(e)   => release(Resource.ExitCase.Errored(e))
-                      case Outcome.Canceled()   => release(Resource.ExitCase.Canceled)
-                    }
+                    res
+                      .trace(awaitResult)
+                      .flatTap { result =>
+                        res.span.addAttributes(Semconv.sendResultAttributes(result))
+                      }
+                      .guaranteeCase {
+                        case Outcome.Succeeded(_) => release(Resource.ExitCase.Succeeded)
+                        case Outcome.Errored(e)   => release(Resource.ExitCase.Errored(e))
+                        case Outcome.Canceled()   => release(Resource.ExitCase.Canceled)
+                      }
                   }
               }
           }
@@ -245,34 +244,40 @@ object TracedKafkaProducer {
         config
       )
 
+    /** @param usesSendSpanAsCreationContext - whether this record relies on the eventual `send` span to represent message
+      * creation.
+      *
+      * `true` means the record has no pre-existing creation context and no dedicated `create` span was synthesized, so
+      * the batch `send` span itself is the creation context for this record.
+      *
+      * `false` means the record already has its own creation context, either from propagated headers already on the
+      * record or from a synthesized `create` span during batch preparation.
+      */
     private case class PreparedRecord(
         record: ProducerRecord[K, V],
         usesSendSpanAsCreationContext: Boolean,
-        sendLink: Option[(SpanContext, Attributes)],
-        releaseCreateSpan: Option[Resource.ExitCase => F[Unit]]
+        sendLink: Option[(SpanContext, Attributes)]
     )
 
     private case class PreparedBatch(
         records: ProducerRecords[K, V],
         sendKind: SpanKind,
-        sendLinks: List[(SpanContext, Attributes)],
-        releaseCreateSpans: Resource.ExitCase => F[Unit]
+        sendLinks: List[(SpanContext, Attributes)]
     )
 
     private def prepareRecord(
         record: ProducerRecord[K, V],
         createCreationContext: Boolean
-    ): F[PreparedRecord] =
-      Tracer[F]
-        .joinOrRoot(record.headers)(Tracer[F].currentSpanContext)
+    ): Resource[F, PreparedRecord] =
+      Resource
+        .eval(Tracer[F].joinOrRoot(record.headers)(Tracer[F].currentSpanContext))
         .flatMap {
           case Some(ctx) =>
-            MonadCancelThrow[F].pure(
+            Resource.pure(
               PreparedRecord(
                 record = record,
                 usesSendSpanAsCreationContext = false,
-                sendLink = Some(ctx -> Semconv.sendLinkAttributes(record)),
-                releaseCreateSpan = None
+                sendLink = Some(ctx -> Semconv.sendLinkAttributes(record))
               )
             )
 
@@ -285,47 +290,40 @@ object TracedKafkaProducer {
               )
               .build
               .resource
-              .allocatedCase
-              .flatMap { case (res, release) =>
+              .evalMap { res =>
                 res
                   .trace(injectHeaders(record))
                   .map { injected =>
                     PreparedRecord(
                       record = injected,
                       usesSendSpanAsCreationContext = false,
-                      sendLink = Some(res.span.context -> Semconv.sendLinkAttributes(record)),
-                      releaseCreateSpan = Some(release)
+                      sendLink = Some(res.span.context -> Semconv.sendLinkAttributes(record))
                     )
                   }
               }
 
           case None =>
-            MonadCancelThrow[F].pure(
+            Resource.pure(
               PreparedRecord(
                 record = record,
                 usesSendSpanAsCreationContext = true,
-                sendLink = None,
-                releaseCreateSpan = None
+                sendLink = None
               )
             )
         }
 
-    private def prepareBatch(records: ProducerRecords[K, V]): F[PreparedBatch] = {
+    private def prepareBatch(records: ProducerRecords[K, V]): Resource[F, PreparedBatch] = {
       val useCreateSpans = records.size > 1
 
       records.toList
         .traverse(prepareRecord(_, useCreateSpans))
         .map { prepared =>
           val sendUsesOwnContext = prepared.forall(_.usesSendSpanAsCreationContext)
-          val releaseCreateSpans = (exitCase: Resource.ExitCase) =>
-            prepared.reverse
-              .traverse_(_.releaseCreateSpan.fold(MonadCancelThrow[F].unit)(_(exitCase)))
 
           PreparedBatch(
             records = ProducerRecords(prepared.map(_.record)),
             sendKind = if (sendUsesOwnContext) SpanKind.Producer else SpanKind.Client,
-            sendLinks = prepared.flatMap(_.sendLink),
-            releaseCreateSpans = releaseCreateSpans
+            sendLinks = prepared.flatMap(_.sendLink)
           )
         }
     }

@@ -34,27 +34,27 @@ final class KafkaTransactionalTracingSuite extends KafkaTracingTestSupport {
           completionsAfterLeakedAwait <- producer.getCompletions
           spansAfterLeakedAwait <- testkit.finishedSpans
           _ <- IO {
-                 assertEquals(producedAfterOuter.size, 1)
-                 assertEquals(producedAfterOuter.head.get.topic, "topic-a")
-                 assert(producedAfterOuter.head.get.headers.toChain.nonEmpty)
-                 assertEquals(completionsAfterOuter, 0)
-                 assertEquals(spansAfterOuter, Nil)
-                 assertEquals(completionsAfterCompleted, 1)
-                 assertExpected(
-                   spansAfterCompleted,
-                   TraceForestExpectation.unordered(
-                     root(SpanExpectation.producer("send topic-b").scopeName("fs2.kafka"))
-                   )
-                 )
-                 assertEquals(completionsAfterLeakedAwait, 2)
-                 assertExpected(
-                   spansAfterLeakedAwait,
-                   TraceForestExpectation.unordered(
-                     root(SpanExpectation.producer("send topic-a").scopeName("fs2.kafka")),
-                     root(SpanExpectation.producer("send topic-b").scopeName("fs2.kafka"))
-                   )
-                 )
-               }
+            assertEquals(producedAfterOuter.size, 1)
+            assertEquals(producedAfterOuter.head.get.topic, "topic-a")
+            assert(producedAfterOuter.head.get.headers.toChain.nonEmpty)
+            assertEquals(completionsAfterOuter, 0)
+            assertEquals(spansAfterOuter, Nil)
+            assertEquals(completionsAfterCompleted, 1)
+            assertExpected(
+              spansAfterCompleted,
+              TraceForestExpectation.unordered(
+                root(SpanExpectation.producer("send topic-b").scopeName("fs2.kafka"))
+              )
+            )
+            assertEquals(completionsAfterLeakedAwait, 2)
+            assertExpected(
+              spansAfterLeakedAwait,
+              TraceForestExpectation.unordered(
+                root(SpanExpectation.producer("send topic-a").scopeName("fs2.kafka")),
+                root(SpanExpectation.producer("send topic-b").scopeName("fs2.kafka"))
+              )
+            )
+          }
         } yield ()
       }
   }
