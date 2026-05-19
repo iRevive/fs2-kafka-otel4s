@@ -28,7 +28,7 @@ def createTracedProducer(
     implicit tracerProvider: TracerProvider[IO]
 ): Resource[IO, TracedKafkaProducer[IO, String, String]] =
   for {
-    tracer <- Resource.eval(KafkaTracer.create[IO](KafkaTracer.Config.default))
+    tracer <- KafkaTracer.resource[IO](KafkaTracer.Config.default)
     // create normal producer
     producer <- KafkaProducer.resource[IO, String, String](producerSettings)
     // create traced producer

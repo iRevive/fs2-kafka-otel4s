@@ -204,6 +204,18 @@ object KafkaTracer {
         new Impl[F](config)
       }
 
+  /** Creates a library-managed [[KafkaTracer]] from the implicit otel4s [[org.typelevel.otel4s.trace.TracerProvider]].
+    *
+    * The returned tracer is not yet bound to a specific Kafka producer. Bind it to a [[fs2.kafka.KafkaProducer]] so the
+    * resulting spans can include static client metadata such as `client.id`. If you want to attach logical broker
+    * endpoint attributes such as `server.address` and `server.port`, provide them explicitly through
+    * [[KafkaTracer.Config.withServerAddress]].
+    */
+  def resource[F[_]: Concurrent: Parallel: TracerProvider](
+      config: Config
+  ): Resource[F, KafkaTracer[F]] =
+    Resource.eval(create(config))
+
   final private class Impl[F[_]: Concurrent: Parallel: Tracer](config: Config) extends KafkaTracer[F] {
 
     override def producer[K: KafkaMessageKey, V](

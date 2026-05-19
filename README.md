@@ -5,7 +5,7 @@
 Add the trace module dependency:
 
 ```scala
-libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "0.1-14a3a51-20260517T091402Z-SNAPSHOT"
+libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "0.1-a460256-20260517T073136Z-SNAPSHOT"
 ```
 
 Create normal `fs2-kafka` producer settings first:
@@ -28,7 +28,7 @@ def createTracedProducer(
     implicit tracerProvider: TracerProvider[IO]
 ): Resource[IO, TracedKafkaProducer[IO, String, String]] =
   for {
-    tracer <- Resource.eval(KafkaTracer.create[IO](KafkaTracer.Config.default))
+    tracer <- KafkaTracer.resource[IO](KafkaTracer.Config.default)
     // create normal producer
     producer <- KafkaProducer.resource[IO, String, String](producerSettings)
     // create traced producer
