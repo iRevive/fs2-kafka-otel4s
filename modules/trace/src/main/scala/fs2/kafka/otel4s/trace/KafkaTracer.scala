@@ -20,14 +20,14 @@ import cats.Parallel
 import cats.effect.{Concurrent, Resource}
 import cats.syntax.functor._
 import cats.syntax.semigroup._
-import fs2.kafka.KafkaProducer
+import fs2.kafka.{KafkaConsumer, KafkaProducer}
 import org.typelevel.otel4s.semconv.attributes.{ErrorAttributes, ServerAttributes}
 import org.typelevel.otel4s.trace.{SpanFinalizer, StatusCode, Tracer, TracerProvider}
 import org.typelevel.otel4s.{Attribute, Attributes}
 
 /** A [[KafkaTracer]] is created from an otel4s [[org.typelevel.otel4s.trace.TracerProvider]] using an instrumentation
   * scope managed entirely by this library. The tracing behavior can be customized with [[KafkaTracer.Config]] while
-  * keeping the instrumentation identity stable. This module currently exposes producer-side tracing only.
+  * keeping the instrumentation identity stable.
   *
   * See the OpenTelemetry messaging and Kafka semantic conventions:
   *
@@ -48,6 +48,15 @@ trait KafkaTracer[F[_]] {
       producer: KafkaProducer.WithSettings[F, K, V]
   ): TracedKafkaProducer[F, K, V]
 
+  /** Creates a consumer-bound tracing handle.
+    *
+    * The handle captures static consumer metadata such as `client.id` and `group.id` from the consumer itself while
+    * keeping `receive` and `process` tracing explicit.
+    */
+  def consumer[K: KafkaMessageKey, V](
+      consumer: KafkaConsumer[F, K, V]
+  ): TracedKafkaConsumer[F, K, V]
+
 }
 
 object KafkaTracer {
@@ -55,14 +64,16 @@ object KafkaTracer {
   /** Configuration for [[KafkaTracer]].
     *
     * Constant attributes configured here are attached to every span emitted by the library. Kafka client metadata
-    * derived from `KafkaProducer` is intentionally not configured here; it is captured by the traced producer bound
-    * from that client.
+    * derived from `KafkaProducer` or `KafkaConsumer` is intentionally not configured here; it is captured by the
+    * traced producer or consumer bound from that client.
     */
   sealed trait Config {
 
     private[otel4s] def tracerName: String
     private[otel4s] def constAttributes: Attributes
     private[otel4s] def sendSpanSetup: SendSpanContext => Config.SpanSetup
+    private[otel4s] def receiveSpanSetup: ReceiveSpanContext => Config.SpanSetup
+    private[otel4s] def processSpanSetup: ProcessSpanContext => Config.SpanSetup
 
     /** Replaces the constant attributes attached to every span emitted by this library.
       *
@@ -81,6 +92,14 @@ object KafkaTracer {
     /** Replaces the function used to derive producer-side `send` span setup from record metadata.
       */
     def withSendSpanSetup(f: SendSpanContext => Config.SpanSetup): Config
+
+    /** Replaces the function used to derive consumer-side `poll` / `receive` span setup from chunk metadata.
+      */
+    def withReceiveSpanSetup(f: ReceiveSpanContext => Config.SpanSetup): Config
+
+    /** Replaces the function used to derive consumer-side `process` span setup from record metadata.
+      */
+    def withProcessSpanSetup(f: ProcessSpanContext => Config.SpanSetup): Config
 
     /** Adds `server.address` and, when provided, `server.port` to emitted spans.
       *
@@ -104,6 +123,12 @@ object KafkaTracer {
 
       val sendSpanSetup: SendSpanContext => SpanSetup =
         ctx => SpanSetup("send", Option.when(ctx.topics.size == 1)(ctx.topics.head))
+
+      val receiveSpanSetup: ReceiveSpanContext => SpanSetup =
+        ctx => SpanSetup("poll", Option.when(ctx.topics.size == 1)(ctx.topics.head))
+
+      val processSpanSetup: ProcessSpanContext => SpanSetup =
+        ctx => SpanSetup("process", Some(ctx.topic))
 
       val spanFinalizationStrategy: SpanFinalizer.Strategy = {
         case Resource.ExitCase.Errored(e) =>
@@ -172,12 +197,16 @@ object KafkaTracer {
         tracerName = Defaults.tracerName,
         constAttributes = Attributes.empty,
         sendSpanSetup = Defaults.sendSpanSetup,
+        receiveSpanSetup = Defaults.receiveSpanSetup,
+        processSpanSetup = Defaults.processSpanSetup,
       )
 
     final private case class ConfigImpl(
         tracerName: String,
         constAttributes: Attributes,
         sendSpanSetup: SendSpanContext => Config.SpanSetup,
+        receiveSpanSetup: ReceiveSpanContext => Config.SpanSetup,
+        processSpanSetup: ProcessSpanContext => Config.SpanSetup,
     ) extends Config {
 
       override def withConstAttributes(attributes: Attributes): Config =
@@ -188,6 +217,12 @@ object KafkaTracer {
 
       override def withSendSpanSetup(f: SendSpanContext => Config.SpanSetup): Config =
         copy(sendSpanSetup = f)
+
+      override def withReceiveSpanSetup(f: ReceiveSpanContext => Config.SpanSetup): Config =
+        copy(receiveSpanSetup = f)
+
+      override def withProcessSpanSetup(f: ProcessSpanContext => Config.SpanSetup): Config =
+        copy(processSpanSetup = f)
 
       override def withServerAddress(serverAddress: String, serverPort: Option[Int]): Config =
         copy(
@@ -239,6 +274,14 @@ object KafkaTracer {
     ): TracedKafkaProducer[F, K, V] =
       new TracedKafkaProducer.Impl[F, K, V](
         producer,
+        config
+      )
+
+    override def consumer[K: KafkaMessageKey, V](
+        consumer: KafkaConsumer[F, K, V]
+    ): TracedKafkaConsumer[F, K, V] =
+      new TracedKafkaConsumer.Impl[F, K, V](
+        consumer,
         config
       )
 
