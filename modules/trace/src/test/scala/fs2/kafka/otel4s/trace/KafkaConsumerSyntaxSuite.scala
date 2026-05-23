@@ -24,12 +24,12 @@ import fs2.kafka.otel4s.trace.syntax._
 
 final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
 
-  test("Chunk[ConsumerRecord].traceReceive delegates to receive") {
+  test("Chunk[ConsumerRecord].receiveTraced delegates to receive") {
     for {
       probe <- ConsumerSyntaxProbe.create()
       record = ConsumerRecord("topic", 0, 42L, "key", "value")
       chunk = Chunk.singleton(record)
-      result <- chunk.traceReceive(IO.pure("ok"))(probe)
+      result <- chunk.receiveTraced(IO.pure("ok"))(probe)
       seen <- probe.receivedChunk.get
     } yield {
       assertEquals(seen, Some(chunk))
@@ -37,12 +37,12 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
     }
   }
 
-  test("Chunk[CommittableConsumerRecord].traceReceive delegates to receiveCommittable") {
+  test("Chunk[CommittableConsumerRecord].receiveTraced delegates to receiveCommittable") {
     for {
       probe <- ConsumerSyntaxProbe.create()
       record = StubKafkaConsumer.committableRecord(ConsumerRecord("topic", 0, 42L, "key", "value"))
       chunk = Chunk.singleton(record)
-      result <- chunk.traceReceive(IO.pure("ok"))(probe)
+      result <- chunk.receiveTraced(IO.pure("ok"))(probe)
       seen <- probe.receivedCommittableChunk.get
     } yield {
       assertEquals(seen, Some(chunk))
@@ -50,11 +50,11 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
     }
   }
 
-  test("ConsumerRecord.traceProcess delegates to process") {
+  test("ConsumerRecord.processTraced delegates to process") {
     for {
       probe <- ConsumerSyntaxProbe.create()
       record = ConsumerRecord("topic", 0, 42L, "key", "value")
-      result <- record.traceProcess(IO.pure("ok"))(probe)
+      result <- record.processTraced(IO.pure("ok"))(probe)
       seen <- probe.processedRecord.get
     } yield {
       assertEquals(seen, Some(record))
@@ -103,25 +103,25 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
     }
   }
 
-  test("Stream[TracedKafkaConsumer].consumeChunk delegates to traced consumeChunk") {
+  test("Stream[TracedKafkaConsumer].consumeChunkTraced delegates to traced consumeChunk") {
     for {
       probe <- ConsumerSyntaxProbe.create()
       _ <- Stream
              .emit(probe)
-             .consumeChunk(_ => IO.pure(CommitNow))
+             .consumeChunkTraced(_ => IO.pure(CommitNow))
              .attempt
       seen <- probe.consumeChunkCalled.get
     } yield assertEquals(seen, true)
   }
 
-  test("Stream[TracedKafkaConsumer].recordsWithProcess delegates to traced recordsWithProcess") {
+  test("Stream[TracedKafkaConsumer].recordsWithProcessTraced delegates to traced recordsWithProcess") {
     val record = StubKafkaConsumer.committableRecord(ConsumerRecord("topic", 0, 1L, "k", "v"))
 
     for {
       probe <- ConsumerSyntaxProbe.create(recordsWithProcessResult = Stream.emit(record))
       result <- Stream
                   .emit(probe)
-                  .recordsWithProcess(IO.pure)
+                  .recordsWithProcessTraced(IO.pure)
                   .compile
                   .toList
       seen <- probe.recordsWithProcessCalled.get

@@ -31,7 +31,7 @@ trait ConsumerTracingSyntax {
       private val records: Chunk[ConsumerRecord[K, V]]
   ) {
 
-    /** Convenience syntax for [[TracedKafkaConsumer.receive]] on a plain `Chunk[ConsumerRecord[...]]`.
+    /** Traced variant of `receive` syntax on a plain `Chunk[ConsumerRecord[...]]`.
       *
       * Is shorthand for:
       *
@@ -39,7 +39,7 @@ trait ConsumerTracingSyntax {
       * tracedConsumer.receive(records)(fa)
       * }}}
       */
-    def traceReceive[F[_], A](fa: F[A])(implicit
+    def receiveTraced[F[_], A](fa: F[A])(implicit
         tracedConsumer: TracedKafkaConsumer[F, K, V]
     ): F[A] =
       tracedConsumer.receive(records)(fa)
@@ -50,7 +50,7 @@ trait ConsumerTracingSyntax {
       private val records: Chunk[CommittableConsumerRecord[F, K, V]]
   ) {
 
-    /** Convenience syntax for [[TracedKafkaConsumer.receiveCommittable]] on a
+    /** Traced variant of `receive` syntax on a
       * `Chunk[CommittableConsumerRecord[...]]`.
       *
       * Is shorthand for:
@@ -59,7 +59,7 @@ trait ConsumerTracingSyntax {
       * tracedConsumer.receiveCommittable(records)(fa)
       * }}}
       */
-    def traceReceive[A](fa: F[A])(implicit
+    def receiveTraced[A](fa: F[A])(implicit
         tracedConsumer: TracedKafkaConsumer[F, K, V]
     ): F[A] =
       tracedConsumer.receiveCommittable(records)(fa)
@@ -70,7 +70,7 @@ trait ConsumerTracingSyntax {
       private val record: ConsumerRecord[K, V]
   ) {
 
-    /** Convenience syntax for [[TracedKafkaConsumer.process]] on a plain [[ConsumerRecord]].
+    /** Traced variant of `process` syntax on a plain [[ConsumerRecord]].
       *
       * Is shorthand for:
       *
@@ -78,7 +78,7 @@ trait ConsumerTracingSyntax {
       * tracedConsumer.process(record)(fa)
       * }}}
       */
-    def traceProcess[F[_], A](fa: F[A])(implicit
+    def processTraced[F[_], A](fa: F[A])(implicit
         tracedConsumer: TracedKafkaConsumer[F, K, V]
     ): F[A] =
       tracedConsumer.process(record)(fa)
@@ -89,7 +89,7 @@ trait ConsumerTracingSyntax {
       private val record: CommittableConsumerRecord[F, K, V]
   ) {
 
-    /** Convenience syntax for [[TracedKafkaConsumer.process]] on a [[CommittableConsumerRecord]].
+    /** Traced variant of `process` syntax on a [[CommittableConsumerRecord]].
       *
       * Is shorthand for:
       *
@@ -97,7 +97,7 @@ trait ConsumerTracingSyntax {
       * tracedConsumer.process(record)(fa)
       * }}}
       */
-    def traceProcess[A](fa: F[A])(implicit
+    def processTraced[A](fa: F[A])(implicit
         tracedConsumer: TracedKafkaConsumer[F, K, V]
     ): F[A] =
       tracedConsumer.process(record)(fa)
@@ -164,7 +164,7 @@ trait TracedKafkaConsumerStreamTracingSyntax {
       private val self: Stream[F, TracedKafkaConsumer[F, K, V]]
   ) {
 
-    /** Convenience syntax for consuming a stream of traced consumers with [[TracedKafkaConsumer.consumeChunk]].
+    /** Traced variant of `consumeChunk` syntax for a stream of traced consumers.
       *
       * Is shorthand for:
       *
@@ -172,12 +172,12 @@ trait TracedKafkaConsumerStreamTracingSyntax {
       * tracedConsumers.evalMap(_.consumeChunk(processor)).compile.onlyOrError
       * }}}
       */
-    def consumeChunk(
+    def consumeChunkTraced(
         processor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
     )(implicit F: Concurrent[F]): F[Nothing] =
       self.evalMap(_.consumeChunk(processor)).compile.onlyOrError
 
-    /** Convenience syntax for flattening a stream of traced consumers via [[TracedKafkaConsumer.recordsWithProcess]].
+    /** Traced variant of `recordsWithProcess` syntax for a stream of traced consumers.
       *
       * Is shorthand for:
       *
@@ -185,7 +185,7 @@ trait TracedKafkaConsumerStreamTracingSyntax {
       * tracedConsumers.flatMap(_.recordsWithProcess(f))
       * }}}
       */
-    def recordsWithProcess[A](
+    def recordsWithProcessTraced[A](
         f: CommittableConsumerRecord[F, K, V] => F[A]
     ): Stream[F, A] =
       self.flatMap(_.recordsWithProcess(f))
