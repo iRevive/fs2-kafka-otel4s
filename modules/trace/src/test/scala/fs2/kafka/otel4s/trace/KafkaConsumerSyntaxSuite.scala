@@ -67,21 +67,21 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
       expected <- ConsumerSyntaxProbe.create()
       underlying = StubKafkaConsumer.metadataOnly[String, String]()
       tracer = new KafkaTracer[IO] {
-                 override def producer[K: KafkaMessageKey, V](
-                     producer: KafkaProducer.WithSettings[IO, K, V]
-                 ): TracedKafkaProducer[IO, K, V] =
-                   throw new AssertionError("unexpected producer")
+        override def producer[K: KafkaMessageKey, V](
+            producer: KafkaProducer.WithSettings[IO, K, V]
+        ): TracedKafkaProducer[IO, K, V] =
+          throw new AssertionError("unexpected producer")
 
-                 override def consumer[K: KafkaMessageKey, V](
-                     consumer: KafkaConsumer[IO, K, V]
-                 ): TracedKafkaConsumer[IO, K, V] =
-                   expected.asInstanceOf[TracedKafkaConsumer[IO, K, V]]
-               }
+        override def consumer[K: KafkaMessageKey, V](
+            consumer: KafkaConsumer[IO, K, V]
+        ): TracedKafkaConsumer[IO, K, V] =
+          expected.asInstanceOf[TracedKafkaConsumer[IO, K, V]]
+      }
       result <- Stream
-                  .emit(underlying)
-                  .traced(tracer)
-                  .compile
-                  .toList
+        .emit(underlying)
+        .traced(tracer)
+        .compile
+        .toList
     } yield assertEquals(result, List(expected))
   }
 
@@ -107,9 +107,9 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
     for {
       probe <- ConsumerSyntaxProbe.create()
       _ <- Stream
-             .emit(probe)
-             .consumeChunkTraced(_ => IO.pure(CommitNow))
-             .attempt
+        .emit(probe)
+        .consumeChunkTraced(_ => IO.pure(CommitNow))
+        .attempt
       seen <- probe.consumeChunkCalled.get
     } yield assertEquals(seen, true)
   }
@@ -120,10 +120,10 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
     for {
       probe <- ConsumerSyntaxProbe.create(recordsWithProcessResult = Stream.emit(record))
       result <- Stream
-                  .emit(probe)
-                  .recordsWithProcessTraced(IO.pure)
-                  .compile
-                  .toList
+        .emit(probe)
+        .recordsWithProcessTraced(IO.pure)
+        .compile
+        .toList
       seen <- probe.recordsWithProcessCalled.get
     } yield {
       assertEquals(seen, true)
@@ -179,12 +179,12 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
       for {
         receiveChunk <- Ref[IO].of(Option.empty[Chunk[ConsumerRecord[String, String]]])
         receiveCommittableChunk <- Ref[IO].of(
-                                     Option.empty[Chunk[CommittableConsumerRecord[IO, String, String]]]
-                                   )
+          Option.empty[Chunk[CommittableConsumerRecord[IO, String, String]]]
+        )
         processedRecord <- Ref[IO].of(Option.empty[ConsumerRecord[String, String]])
         processedCommittable <- Ref[IO].of(
-                                  Option.empty[CommittableConsumerRecord[IO, String, String]]
-                                )
+          Option.empty[CommittableConsumerRecord[IO, String, String]]
+        )
         consumeChunkCalled <- Ref[IO].of(false)
         recordsWithProcessCalled <- Ref[IO].of(false)
       } yield new ConsumerSyntaxProbe(

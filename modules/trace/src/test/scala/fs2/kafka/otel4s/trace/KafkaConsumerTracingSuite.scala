@@ -33,61 +33,61 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
 
         for {
           producerTracer <- testkit.tracedProducer[String, String](
-                              StubKafkaProducer.metadataOnly("producer-client")
-                            )
+            StubKafkaProducer.metadataOnly("producer-client")
+          )
           produced <- Tracer[IO]
-                        .rootSpan("producer-root")
-                        .surround {
-                          for {
-                            span <- Tracer[IO].currentSpanOrThrow
-                            propagated <- producerTracer.injectHeaders(
-                                            ProducerRecord("topic", "key", "value")
-                                          )
-                          } yield (span.context, propagated)
-                        }
+            .rootSpan("producer-root")
+            .surround {
+              for {
+                span <- Tracer[IO].currentSpanOrThrow
+                propagated <- producerTracer.injectHeaders(
+                  ProducerRecord("topic", "key", "value")
+                )
+              } yield (span.context, propagated)
+            }
           (producerRootContext, propagated) = produced
           consumed = ConsumerRecord("topic", 0, 42L, "key", "value").withHeaders(propagated.headers)
           consumerTracer <- testkit.tracedConsumer[String, String](
-                              StubKafkaConsumer.metadataOnly("consumer-client", "consumer-group")
-                            )
+            StubKafkaConsumer.metadataOnly("consumer-client", "consumer-group")
+          )
           _ <- consumerTracer.process(consumed)(IO.unit)
           spans <- testkit.finishedSpans
           _ <- IO {
-                 assertExpected(
-                   spans,
-                   TraceForestExpectation.unordered(
-                     root(SpanExpectation.internal("producer-root").scopeName("fs2.kafka.otel4s.tests")),
-                     TraceExpectation.leaf(
-                       SpanExpectation
-                         .consumer("process topic")
-                         .scopeName("fs2.kafka")
-                         .attributesSubset(
-                           MessagingExperimentalAttributes.MessagingSystem(
-                             MessagingExperimentalAttributes.MessagingSystemValue.Kafka
-                           ),
-                           MessagingExperimentalAttributes.MessagingDestinationName("topic"),
-                           MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
-                           MessagingExperimentalAttributes.MessagingOperationName("process"),
-                           MessagingExperimentalAttributes.MessagingOperationType("process"),
-                           MessagingExperimentalAttributes.MessagingClientId("consumer-client"),
-                           MessagingExperimentalAttributes.MessagingConsumerGroupName("consumer-group"),
-                           MessagingExperimentalAttributes.MessagingKafkaMessageKey("key"),
-                           MessagingExperimentalAttributes.MessagingKafkaOffset(42L)
-                         )
-                         .noParentSpanContext
-                         .links(
-                           LinkSetExpectation.exactly(
-                             LinkExpectation.any.spanContext(
-                               SpanContextExpectation.any
-                                 .traceIdHex(producerRootContext.traceIdHex)
-                                 .spanIdHex(producerRootContext.spanIdHex)
-                             )
-                           )
-                         )
-                     )
-                   )
-                 )
-               }
+            assertExpected(
+              spans,
+              TraceForestExpectation.unordered(
+                root(SpanExpectation.internal("producer-root").scopeName("fs2.kafka.otel4s.tests")),
+                TraceExpectation.leaf(
+                  SpanExpectation
+                    .consumer("process topic")
+                    .scopeName("fs2.kafka")
+                    .attributesSubset(
+                      MessagingExperimentalAttributes.MessagingSystem(
+                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      ),
+                      MessagingExperimentalAttributes.MessagingDestinationName("topic"),
+                      MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
+                      MessagingExperimentalAttributes.MessagingOperationName("process"),
+                      MessagingExperimentalAttributes.MessagingOperationType("process"),
+                      MessagingExperimentalAttributes.MessagingClientId("consumer-client"),
+                      MessagingExperimentalAttributes.MessagingConsumerGroupName("consumer-group"),
+                      MessagingExperimentalAttributes.MessagingKafkaMessageKey("key"),
+                      MessagingExperimentalAttributes.MessagingKafkaOffset(42L)
+                    )
+                    .noParentSpanContext
+                    .links(
+                      LinkSetExpectation.exactly(
+                        LinkExpectation.any.spanContext(
+                          SpanContextExpectation.any
+                            .traceIdHex(producerRootContext.traceIdHex)
+                            .spanIdHex(producerRootContext.spanIdHex)
+                        )
+                      )
+                    )
+                )
+              )
+            )
+          }
         } yield ()
       }
   }
@@ -100,20 +100,20 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
 
         for {
           producerTracer <- testkit.tracedProducer[String, String](
-                              StubKafkaProducer.metadataOnly("producer-client")
-                            )
+            StubKafkaProducer.metadataOnly("producer-client")
+          )
           consumerTracer <- testkit.tracedConsumer[String, String](
-                              StubKafkaConsumer.metadataOnly("consumer-client", "consumer-group")
-                            )
+            StubKafkaConsumer.metadataOnly("consumer-client", "consumer-group")
+          )
           produced <- Tracer[IO]
-                        .rootSpan("producer-root")
-                        .surround {
-                          for {
-                            span <- Tracer[IO].currentSpanOrThrow
-                            record1 <- producerTracer.injectHeaders(ProducerRecord("topic", "k1", "v1"))
-                            record2 <- producerTracer.injectHeaders(ProducerRecord("topic", "k2", "v2"))
-                          } yield (span.context, record1, record2)
-                        }
+            .rootSpan("producer-root")
+            .surround {
+              for {
+                span <- Tracer[IO].currentSpanOrThrow
+                record1 <- producerTracer.injectHeaders(ProducerRecord("topic", "k1", "v1"))
+                record2 <- producerTracer.injectHeaders(ProducerRecord("topic", "k2", "v2"))
+              } yield (span.context, record1, record2)
+            }
           (producerRootContext, record1, record2) = produced
           records = Chunk(
             ConsumerRecord("topic", 0, 1L, "k1", "v1").withHeaders(record1.headers),
@@ -122,45 +122,45 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
           _ <- consumerTracer.receive(records)(IO.unit)
           spans <- testkit.finishedSpans
           _ <- IO {
-                 assertExpected(
-                   spans,
-                   TraceForestExpectation.unordered(
-                     root(SpanExpectation.internal("producer-root").scopeName("fs2.kafka.otel4s.tests")),
-                     root(
-                       SpanExpectation
-                         .client("poll topic")
-                         .scopeName("fs2.kafka")
-                         .attributesSubset(
-                           MessagingExperimentalAttributes.MessagingSystem(
-                             MessagingExperimentalAttributes.MessagingSystemValue.Kafka
-                           ),
-                           MessagingExperimentalAttributes.MessagingDestinationName("topic"),
-                           MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
-                           MessagingExperimentalAttributes.MessagingOperationName("poll"),
-                           MessagingExperimentalAttributes.MessagingOperationType("receive"),
-                           MessagingExperimentalAttributes.MessagingClientId("consumer-client"),
-                           MessagingExperimentalAttributes.MessagingConsumerGroupName("consumer-group"),
-                           MessagingExperimentalAttributes.MessagingBatchMessageCount(2L)
-                         )
-                         .noParentSpanContext
-                         .links(
-                           LinkSetExpectation.exactly(
-                             LinkExpectation.any.spanContext(
-                               SpanContextExpectation.any
-                                 .traceIdHex(producerRootContext.traceIdHex)
-                                 .spanIdHex(producerRootContext.spanIdHex)
-                             ),
-                             LinkExpectation.any.spanContext(
-                               SpanContextExpectation.any
-                                 .traceIdHex(producerRootContext.traceIdHex)
-                                 .spanIdHex(producerRootContext.spanIdHex)
-                             )
-                           )
-                         )
-                     )
-                   )
-                 )
-               }
+            assertExpected(
+              spans,
+              TraceForestExpectation.unordered(
+                root(SpanExpectation.internal("producer-root").scopeName("fs2.kafka.otel4s.tests")),
+                root(
+                  SpanExpectation
+                    .client("poll topic")
+                    .scopeName("fs2.kafka")
+                    .attributesSubset(
+                      MessagingExperimentalAttributes.MessagingSystem(
+                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      ),
+                      MessagingExperimentalAttributes.MessagingDestinationName("topic"),
+                      MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
+                      MessagingExperimentalAttributes.MessagingOperationName("poll"),
+                      MessagingExperimentalAttributes.MessagingOperationType("receive"),
+                      MessagingExperimentalAttributes.MessagingClientId("consumer-client"),
+                      MessagingExperimentalAttributes.MessagingConsumerGroupName("consumer-group"),
+                      MessagingExperimentalAttributes.MessagingBatchMessageCount(2L)
+                    )
+                    .noParentSpanContext
+                    .links(
+                      LinkSetExpectation.exactly(
+                        LinkExpectation.any.spanContext(
+                          SpanContextExpectation.any
+                            .traceIdHex(producerRootContext.traceIdHex)
+                            .spanIdHex(producerRootContext.spanIdHex)
+                        ),
+                        LinkExpectation.any.spanContext(
+                          SpanContextExpectation.any
+                            .traceIdHex(producerRootContext.traceIdHex)
+                            .spanIdHex(producerRootContext.spanIdHex)
+                        )
+                      )
+                    )
+                )
+              )
+            )
+          }
         } yield ()
       }
   }

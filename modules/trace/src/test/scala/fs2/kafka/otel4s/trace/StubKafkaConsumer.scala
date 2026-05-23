@@ -41,8 +41,7 @@ class StubKafkaConsumer[K, V](
   override def stream: Stream[IO, CommittableConsumerRecord[IO, K, V]] = Stream.eval(unsupported)
   override def partitionedStream: Stream[IO, Stream[IO, CommittableConsumerRecord[IO, K, V]]] =
     Stream.eval(unsupported)
-  override def partitionsMapStream
-      : Stream[IO, Map[TopicPartition, Stream[IO, CommittableConsumerRecord[IO, K, V]]]] =
+  override def partitionsMapStream: Stream[IO, Map[TopicPartition, Stream[IO, CommittableConsumerRecord[IO, K, V]]]] =
     Stream.eval(unsupported)
   override def stopConsuming: IO[Unit] = unsupported
   override def terminate: IO[Unit] = unsupported
@@ -115,9 +114,7 @@ object StubKafkaConsumer {
           : Stream[IO, Map[TopicPartition, Stream[IO, CommittableConsumerRecord[IO, K, V]]]] =
         Stream.emit(
           records0
-            .groupBy(record =>
-              new TopicPartition(record.record.topic, record.record.partition)
-            )
+            .groupBy(record => new TopicPartition(record.record.topic, record.record.partition))
             .view
             .mapValues(Stream.emits(_))
             .toMap

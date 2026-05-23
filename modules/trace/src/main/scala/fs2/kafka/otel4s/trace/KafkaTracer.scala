@@ -64,8 +64,8 @@ object KafkaTracer {
   /** Configuration for [[KafkaTracer]].
     *
     * Constant attributes configured here are attached to every span emitted by the library. Kafka client metadata
-    * derived from `KafkaProducer` or `KafkaConsumer` is intentionally not configured here; it is captured by the
-    * traced producer or consumer bound from that client.
+    * derived from `KafkaProducer` or `KafkaConsumer` is intentionally not configured here; it is captured by the traced
+    * producer or consumer bound from that client.
     */
   sealed trait Config {
 

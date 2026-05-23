@@ -187,8 +187,8 @@ trait TracedKafkaConsumerStreamTracingSyntax {
     )(implicit F: Concurrent[F]): F[Nothing] =
       self.evalMap(_.consumeChunk(processor)).compile.onlyOrError
 
-    /** Convenience stream for the common traced-consumption shape: a chunk-level `receive` span around delivery, plus
-      * a per-record `process` span for each record in that chunk.
+    /** Convenience stream for the common traced-consumption shape: a chunk-level `receive` span around delivery, plus a
+      * per-record `process` span for each record in that chunk.
       *
       * Is shorthand for:
       *
