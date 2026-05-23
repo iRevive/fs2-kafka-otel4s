@@ -142,15 +142,6 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
       recordsWithProcessResult: Stream[IO, CommittableConsumerRecord[IO, String, String]] = Stream.empty
   ) extends TracedKafkaConsumer[IO, String, String] {
 
-    override def records: Stream[IO, CommittableConsumerRecord[IO, String, String]] =
-      Stream.empty
-
-    override def partitionedRecords: Stream[IO, Stream[IO, CommittableConsumerRecord[IO, String, String]]] =
-      Stream.empty
-
-    override def partitionedStream: Stream[IO, Stream[IO, CommittableConsumerRecord[IO, String, String]]] =
-      Stream.empty
-
     override def consumeChunk(
         processor: Chunk[ConsumerRecord[String, String]] => IO[CommitNow]
     ): IO[Nothing] =

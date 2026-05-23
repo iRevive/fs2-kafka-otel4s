@@ -28,6 +28,8 @@ import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.typelevel.otel4s.Attributes
 import org.typelevel.otel4s.trace.{SpanContext, SpanKind, Tracer}
 
+import scala.util.chaining._
+
 /** A consumer-bound tracing handle for `fs2-kafka`.
   *
   * Unlike producer tracing, consumer tracing cannot be a fully transparent drop-in replacement, because the important
@@ -45,33 +47,24 @@ trait TracedKafkaConsumer[F[_], K, V] {
     * Record emission itself is not treated as processing. Wrap the actual business logic with [[process]] or use
     * [[recordsWithProcess]] for the common `evalMap` shape.
     */
-  def records: Stream[F, CommittableConsumerRecord[F, K, V]]
+  final def records: Stream[F, CommittableConsumerRecord[F, K, V]] =
+    underlying.records
 
   /** Delegates to [[underlying.partitionedRecords]].
     *
     * This is a passthrough convenience so partition-oriented code can stay on the traced handle without reaching back
     * to [[underlying]].
-    *
-    * {{{
-    * tracedConsumer.partitionedRecords
-    * // is equivalent to
-    * tracedConsumer.underlying.partitionedRecords
-    * }}}
     */
-  def partitionedRecords: Stream[F, Stream[F, CommittableConsumerRecord[F, K, V]]]
+  final def partitionedRecords: Stream[F, Stream[F, CommittableConsumerRecord[F, K, V]]] =
+    underlying.partitionedRecords
 
   /** Delegates to [[underlying.partitionedStream]].
     *
     * This is a passthrough convenience so partition-oriented code can stay on the traced handle without reaching back
     * to [[underlying]].
-    *
-    * {{{
-    * tracedConsumer.partitionedStream
-    * // is equivalent to
-    * tracedConsumer.underlying.partitionedStream
-    * }}}
     */
-  def partitionedStream: Stream[F, Stream[F, CommittableConsumerRecord[F, K, V]]]
+  final def partitionedStream: Stream[F, Stream[F, CommittableConsumerRecord[F, K, V]]] =
+    underlying.partitionedStream
 
   /** Consume from all assigned partitions concurrently, tracing delivery of each emitted chunk to the supplied
     * callback.
@@ -158,23 +151,13 @@ object TracedKafkaConsumer {
     private val groupId =
       underlying.settings.properties.get(ConsumerConfig.GROUP_ID_CONFIG)
 
-    override def records: Stream[F, CommittableConsumerRecord[F, K, V]] =
-      underlying.records
-
-    override def partitionedRecords: Stream[F, Stream[F, CommittableConsumerRecord[F, K, V]]] =
-      underlying.partitionedRecords
-
-    override def partitionedStream: Stream[F, Stream[F, CommittableConsumerRecord[F, K, V]]] =
-      underlying.partitionedStream
-
     override def consumeChunk(
         processor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
     ): F[Nothing] =
-      underlying
-        .partitionedStream
+      underlying.partitionedStream
         .map(
           _.chunks.evalMap { chunk =>
-            receiveCommittable(chunk)(processor(chunk.map(_.record))).as(())
+            receiveCommittable(chunk)(processor(chunk.map(_.record))).void
           }
         )
         .parJoinUnbounded
@@ -188,7 +171,7 @@ object TracedKafkaConsumer {
         val spanContext = Semconv.receiveSpanContext(records, clientId, groupId)
         val spanSetup = config.receiveSpanSetup(spanContext)
         creationContextLinks(records.toList).flatMap { links =>
-          val builder = Tracer[F]
+          Tracer[F]
             .spanBuilder(spanSetup.spanName)
             .withSpanKind(SpanKind.Client)
             .withFinalizationStrategy(spanSetup.finalizationStrategy)
@@ -197,11 +180,11 @@ object TracedKafkaConsumer {
                 config.constAttributes ++
                 spanSetup.attributes
             )
-          val linked = links.foldLeft(builder) { case (acc, (ctx, attributes)) =>
-            acc.addLink(ctx, attributes)
-          }
-
-          linked
+            .pipe { builder =>
+              links.foldLeft(builder) { case (acc, (ctx, attributes)) =>
+                acc.addLink(ctx, attributes)
+              }
+            }
             .build
             .surround(fa)
         }
@@ -216,7 +199,7 @@ object TracedKafkaConsumer {
       val spanContext = Semconv.processSpanContext(record, clientId, groupId)
       val spanSetup = config.processSpanSetup(spanContext)
       creationContextLinks(record :: Nil).flatMap { links =>
-        val builder = Tracer[F]
+        Tracer[F]
           .spanBuilder(spanSetup.spanName)
           .withSpanKind(SpanKind.Consumer)
           .withFinalizationStrategy(spanSetup.finalizationStrategy)
@@ -225,11 +208,11 @@ object TracedKafkaConsumer {
               config.constAttributes ++
               spanSetup.attributes
           )
-        val linked = links.foldLeft(builder) { case (acc, (ctx, attributes)) =>
-          acc.addLink(ctx, attributes)
-        }
-
-        linked
+          .pipe { builder =>
+            links.foldLeft(builder) { case (acc, (ctx, attributes)) =>
+              acc.addLink(ctx, attributes)
+            }
+          }
           .build
           .surround(fa)
       }
@@ -241,16 +224,13 @@ object TracedKafkaConsumer {
     override def recordsWithProcess[A](
         f: CommittableConsumerRecord[F, K, V] => F[A]
     ): Stream[F, A] =
-      underlying
-        .partitionedStream
+      underlying.partitionedStream
         .map(
           _.chunks
             .flatMap { chunk =>
               Stream
                 .eval(receiveCommittable(chunk)(Concurrent[F].pure(chunk)))
-                .flatMap(records =>
-                  Stream.chunk(records).evalMap(record => process(record)(f(record)))
-                )
+                .flatMap(records => Stream.chunk(records).evalMap(record => process(record)(f(record))))
             }
         )
         .parJoinUnbounded
@@ -258,8 +238,7 @@ object TracedKafkaConsumer {
     private def creationContextLinks(
         records: Iterable[ConsumerRecord[K, V]]
     ): F[List[(SpanContext, Attributes)]] =
-      records
-        .toList
+      records.toList
         .flatTraverse { record =>
           Tracer[F]
             .joinOrRoot(record.headers)(Tracer[F].currentSpanContext)

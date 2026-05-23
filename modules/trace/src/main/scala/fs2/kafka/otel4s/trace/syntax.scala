@@ -31,7 +31,8 @@ trait ConsumerTracingSyntax {
       private val records: Chunk[ConsumerRecord[K, V]]
   ) {
 
-    /** Traced variant of `receive` syntax on a plain `Chunk[ConsumerRecord[...]]`.
+    /** Evaluates `fa` inside a `poll` / `receive` span representing delivery of a non-committable chunk of records to
+      * application code.
       *
       * Is shorthand for:
       *
@@ -50,8 +51,11 @@ trait ConsumerTracingSyntax {
       private val records: Chunk[CommittableConsumerRecord[F, K, V]]
   ) {
 
-    /** Traced variant of `receive` syntax on a
-      * `Chunk[CommittableConsumerRecord[...]]`.
+    /** Evaluates `fa` inside a `poll` / `receive` span representing delivery of a committable chunk of records to
+      * application code.
+      *
+      * The commit handle is preserved, but span attributes are derived from the wrapped
+      * [[CommittableConsumerRecord.record]] values.
       *
       * Is shorthand for:
       *
@@ -70,7 +74,7 @@ trait ConsumerTracingSyntax {
       private val record: ConsumerRecord[K, V]
   ) {
 
-    /** Traced variant of `process` syntax on a plain [[ConsumerRecord]].
+    /** Evaluates `fa` inside a `process` span using trace context extracted from the record headers when available.
       *
       * Is shorthand for:
       *
@@ -89,7 +93,10 @@ trait ConsumerTracingSyntax {
       private val record: CommittableConsumerRecord[F, K, V]
   ) {
 
-    /** Traced variant of `process` syntax on a [[CommittableConsumerRecord]].
+    /** Evaluates `fa` inside a `process` span using trace context extracted from the record headers when available.
+      *
+      * This variant accepts a [[CommittableConsumerRecord]] directly and derives span attributes from its wrapped
+      * [[CommittableConsumerRecord.record]] value.
       *
       * Is shorthand for:
       *
@@ -114,7 +121,7 @@ trait KafkaConsumerStreamTracingSyntax {
       private val self: Stream[F, KafkaConsumer[F, K, V]]
   ) {
 
-    /** Convenience syntax that binds a [[KafkaTracer]] to each emitted raw consumer, yielding traced handles.
+    /** Binds a [[KafkaTracer]] to each emitted raw consumer, yielding traced handles.
       *
       * Is shorthand for:
       *
@@ -129,8 +136,7 @@ trait KafkaConsumerStreamTracingSyntax {
     ): Stream[F, TracedKafkaConsumer[F, K, V]] =
       self.map(kafkaTracer.consumer(_))
 
-    /** Convenience syntax that creates a library-managed [[KafkaTracer]] from `config`, then binds it to each emitted
-      * raw consumer.
+    /** Creates a library-managed [[KafkaTracer]] from `config`, then binds it to each emitted raw consumer.
       *
       * The tracer is created once per stream evaluation, not once per emitted consumer.
       *
@@ -164,7 +170,11 @@ trait TracedKafkaConsumerStreamTracingSyntax {
       private val self: Stream[F, TracedKafkaConsumer[F, K, V]]
   ) {
 
-    /** Traced variant of `consumeChunk` syntax for a stream of traced consumers.
+    /** Consumes from all assigned partitions concurrently, tracing delivery of each emitted chunk to the supplied
+      * callback.
+      *
+      * This helper models chunk delivery with `receive` spans. If you want per-record `process` spans, use
+      * [[recordsWithProcessTraced]] or wrap explicit record handling with [[processTraced]].
       *
       * Is shorthand for:
       *
@@ -177,7 +187,8 @@ trait TracedKafkaConsumerStreamTracingSyntax {
     )(implicit F: Concurrent[F]): F[Nothing] =
       self.evalMap(_.consumeChunk(processor)).compile.onlyOrError
 
-    /** Traced variant of `recordsWithProcess` syntax for a stream of traced consumers.
+    /** Convenience stream for the common traced-consumption shape: a chunk-level `receive` span around delivery, plus
+      * a per-record `process` span for each record in that chunk.
       *
       * Is shorthand for:
       *
