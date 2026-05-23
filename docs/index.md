@@ -5,12 +5,12 @@
 Add the trace module dependency:
 
 ```scala
-libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "0.1-a460256-20260517T073136Z-SNAPSHOT"
+libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "@VERSION@"
 ```
 
 Create normal `fs2-kafka` producer settings first:
 
-```scala
+```scala mdoc:silent
 import cats.effect.{IO, Resource}
 import fs2.kafka.{KafkaProducer, ProducerSettings, Serializer}
 import fs2.kafka.otel4s.trace.{KafkaTracer, TracedKafkaProducer}
@@ -37,7 +37,7 @@ def createTracedProducer(
 
 If you want broker-level endpoint attributes on emitted spans, configure them explicitly:
 
-```scala
+```scala mdoc:silent
 import fs2.kafka.otel4s.trace.KafkaTracer
 
 val tracerConfig: KafkaTracer.Config =
@@ -57,7 +57,7 @@ The important part is that `produce` keeps the original fs2-kafka two-stage cont
 
 So in the common case you want `produce(...).flatten`.
 
-```scala
+```scala mdoc:silent
 import fs2.Chunk
 import fs2.kafka.{ProducerRecord, ProducerRecords, ProducerResult}
 import fs2.kafka.otel4s.trace.TracedKafkaProducer
@@ -90,7 +90,7 @@ def sendBatch(
 
 You can also inject trace headers without sending yet:
 
-```scala
+```scala mdoc:silent
 import fs2.kafka.ProducerRecord
 
 def prepareRecord(
@@ -103,7 +103,7 @@ def prepareRecord(
 
 Transactional APIs remain available and traced:
 
-```scala
+```scala mdoc:silent
 import fs2.kafka.{ProducerRecords, ProducerResult}
 
 def sendTransactionally(
@@ -131,7 +131,7 @@ rebuilding it for every send.
 
 If your producer key type is not already covered, define a canonical string representation for semantic attributes:
 
-```scala
+```scala mdoc:silent
 import fs2.kafka.otel4s.trace.KafkaMessageKey
 
 final class OrderId(val value: String)
@@ -146,7 +146,7 @@ Return `None` when the key should not be exposed as telemetry.
 
 If you need to change serializers on a traced producer and the key type changes, use `tracedWithSerializers`.
 
-```scala
+```scala mdoc:silent
 import fs2.kafka.otel4s.trace.{KafkaMessageKey, TracedKafkaProducer}
 
 final class RemappedKey(val value: String)
@@ -184,7 +184,7 @@ them through `KafkaTracer.Config`.
 
 This is the most important caveat in the current API.
 
-```scala
+```scala mdoc:silent
 import fs2.kafka.{ProducerRecord, ProducerRecords, ProducerResult}
 import fs2.kafka.otel4s.trace.TracedKafkaProducer
 

@@ -17,7 +17,7 @@ ThisBuild / tlCiDependencyGraphJob := false
 ThisBuild / resolvers += Resolver.sonatypeCentralSnapshots
 
 lazy val Versions = new {
-  val fs2kafka = "4.1-39810b2-SNAPSHOT"
+  val fs2kafka = "4.1-078c324-SNAPSHOT"
   val otel4s = "1.0.0"
 
   val munit = "1.2.4"
@@ -33,6 +33,7 @@ lazy val munitDependencies = Def.settings(
 
 lazy val root = tlCrossRootProject.aggregate(
   trace,
+  docs,
 )
 
 lazy val trace = project
@@ -45,6 +46,8 @@ lazy val trace = project
       "org.typelevel" %% "fs2-kafka" % Versions.fs2kafka,
       "org.typelevel" %% "otel4s-core-trace" % Versions.otel4s,
       "org.typelevel" %% "otel4s-semconv" % Versions.otel4s,
+      "org.typelevel" %% "otel4s-oteljava-testkit" % Versions.otel4s % Test,
+      "org.typelevel" %% "otel4s-semconv-experimental" % Versions.otel4s % Test,
     ),
     buildInfoPackage := "fs2.kafka.otel4s.trace",
     buildInfoOptions += sbtbuildinfo.BuildInfoOption.PackagePrivate,
@@ -53,3 +56,14 @@ lazy val trace = project
     )
   )
 
+lazy val docs = project
+  .in(file("modules/docs"))
+  .enablePlugins(MdocPlugin, NoPublishPlugin)
+  .settings(
+    mdocIn := file("docs/index.md"),
+    mdocOut := file("README.md"),
+    mdocVariables := Map(
+      "VERSION" -> version.value
+    ),
+  )
+  .dependsOn(trace)
