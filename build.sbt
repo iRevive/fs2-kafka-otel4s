@@ -16,6 +16,8 @@ ThisBuild / tlCiDependencyGraphJob := false
 
 ThisBuild / resolvers += Resolver.sonatypeCentralSnapshots
 
+ThisBuild / githubWorkflowJavaVersions := Seq(JavaSpec.temurin("17"))
+
 lazy val Versions = new {
   val fs2kafka = "4.1-078c324-SNAPSHOT"
   val otel4s = "1.0.0"
