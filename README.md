@@ -5,7 +5,7 @@
 Add the trace module dependency:
 
 ```scala
-libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "0.1-a460256-20260517T073136Z-SNAPSHOT"
+libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "0.1-d44d3ca-20260523T181015Z-SNAPSHOT"
 ```
 
 Create normal `fs2-kafka` producer settings first:
@@ -50,6 +50,10 @@ val tracerConfig: KafkaTracer.Config =
 Bind a `KafkaTracer` to a concrete `KafkaProducer.WithSettings`, then call the traced producer exactly like the normal
 fs2-kafka producer.
 
+If you want the most concise producer binding, import `fs2.kafka.otel4s.trace.syntax._`. That gives you:
+
+- `.traced(...)` on `Stream[F, KafkaProducer.WithSettings[...]]`
+
 The important part is that `produce` keeps the original fs2-kafka two-stage contract:
 
 - the outer effect stages the send
@@ -88,6 +92,29 @@ def sendBatch(
     .flatten
 ```
 
+The syntax import lets you bind tracing at the stream boundary and keep the rest of the producer API unchanged:
+
+```scala
+import fs2.Stream
+import fs2.kafka.otel4s.trace.syntax._
+
+def sendWithSyntax(
+    implicit tracerProvider: TracerProvider[IO]
+): IO[ProducerResult[String, String]] =
+  Stream
+    .resource(KafkaProducer.resource[IO, String, String](producerSettings))
+    .traced(KafkaTracer.Config.default)
+    .evalMap { producer =>
+      producer.produce(
+        ProducerRecords.one(
+        ProducerRecord("orders", "order-1", """{"status":"created"}""")
+        )
+      ).flatten
+    }
+    .compile
+    .onlyOrError
+```
+
 You can also inject trace headers without sending yet:
 
 ```scala
@@ -121,6 +148,8 @@ def sendTransactionally(
 ### Prefer `produce(...).flatten` at the call site
 
 That is the simplest way to keep span lifetime aligned with Kafka acknowledgement.
+
+When you use stream syntax, the send path still remains `producer.produce(...).flatten`.
 
 ### Reuse one traced producer per bound Kafka producer
 
