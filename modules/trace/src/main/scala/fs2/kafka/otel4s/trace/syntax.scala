@@ -174,7 +174,7 @@ trait TracedKafkaConsumerStreamTracingSyntax {
       * callback.
       *
       * This helper models chunk delivery with `receive` spans. If you want per-record `process` spans, use
-      * [[recordsWithProcessTraced]] or wrap explicit record handling with [[processTraced]].
+      * [[recordsWithProcessTraced]] or wrap explicit record handling with `processTraced`.
       *
       * Is shorthand for:
       *

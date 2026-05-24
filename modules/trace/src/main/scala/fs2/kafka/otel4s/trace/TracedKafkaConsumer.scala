@@ -42,15 +42,15 @@ trait TracedKafkaConsumer[F[_], K, V] {
     */
   def underlying: KafkaConsumer[F, K, V]
 
-  /** Delegates to [[underlying.records]].
+  /** Delegates to `underlying.records`.
     *
-    * Record emission itself is not treated as processing. Wrap the actual business logic with [[process]] or use
+    * Record emission itself is not treated as processing. Wrap the actual business logic with `process` or use
     * [[recordsWithProcess]] for the common `evalMap` shape.
     */
   final def records: Stream[F, CommittableConsumerRecord[F, K, V]] =
     underlying.records
 
-  /** Delegates to [[underlying.partitionedRecords]].
+  /** Delegates to `underlying.partitionedRecords`.
     *
     * This is a passthrough convenience so partition-oriented code can stay on the traced handle without reaching back
     * to [[underlying]].
@@ -58,7 +58,7 @@ trait TracedKafkaConsumer[F[_], K, V] {
   final def partitionedRecords: Stream[F, Stream[F, CommittableConsumerRecord[F, K, V]]] =
     underlying.partitionedRecords
 
-  /** Delegates to [[underlying.partitionedStream]].
+  /** Delegates to `underlying.partitionedStream`.
     *
     * This is a passthrough convenience so partition-oriented code can stay on the traced handle without reaching back
     * to [[underlying]].
@@ -70,7 +70,7 @@ trait TracedKafkaConsumer[F[_], K, V] {
     * callback.
     *
     * This helper models chunk delivery with `receive` spans. If you want per-record `process` spans, use
-    * [[recordsWithProcess]] or wrap explicit record handling with [[process]].
+    * [[recordsWithProcess]] or wrap explicit record handling with `process`.
     */
   def consumeChunk(
       processor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
@@ -101,7 +101,7 @@ trait TracedKafkaConsumer[F[_], K, V] {
 
   /** Evaluates `fa` inside a `process` span using trace context extracted from the record headers when available.
     *
-    * This is a convenience overload of [[process]] for [[CommittableConsumerRecord]] that forwards to the plain
+    * This is a convenience overload of `process` for [[CommittableConsumerRecord]] that forwards to the plain
     * [[ConsumerRecord]]-based variant using [[CommittableConsumerRecord.record]].
     *
     * Is shorthand for:
@@ -116,7 +116,7 @@ trait TracedKafkaConsumer[F[_], K, V] {
     * per-record `process` span for each record in that chunk.
     *
     * This is shorthand for consuming the underlying partitioned stream chunk-by-chunk, wrapping each chunk with
-    * [[receiveCommittable]], and then wrapping each record callback with [[process]].
+    * [[receiveCommittable]], and then wrapping each record callback with `process`.
     *
     * Is shorthand for:
     *
