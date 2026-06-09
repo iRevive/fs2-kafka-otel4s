@@ -209,42 +209,42 @@ trait TracedKafkaConsumerStreamTracingSyntax {
 trait KafkaProducerStreamTracingSyntax {
 
   implicit final class KafkaProducerStreamTracingOps[F[_], K, V](
-                                                                  private val self: Stream[F, KafkaProducer.WithSettings[F, K, V]]
-                                                                ) {
+      private val self: Stream[F, KafkaProducer.WithSettings[F, K, V]]
+  ) {
 
     /** Binds a [[KafkaTracer]] to each emitted raw producer, yielding traced handles.
-     *
-     * Is shorthand for:
-     *
-     * {{{
-     * producers.map(kafkaTracer.producer(_))
-     * }}}
-     */
+      *
+      * Is shorthand for:
+      *
+      * {{{
+      * producers.map(kafkaTracer.producer(_))
+      * }}}
+      */
     def traced(
-                kafkaTracer: KafkaTracer[F]
-              )(implicit
-                ev: KafkaMessageKey[K]
-              ): Stream[F, TracedKafkaProducer[F, K, V]] =
+        kafkaTracer: KafkaTracer[F]
+    )(implicit
+        ev: KafkaMessageKey[K]
+    ): Stream[F, TracedKafkaProducer[F, K, V]] =
       self.map(kafkaTracer.producer(_))
 
     /** Creates a library-managed [[KafkaTracer]] from `config`, then binds it to each emitted raw producer.
-     *
-     * The tracer is created once per stream evaluation, not once per emitted producer.
-     *
-     * Is shorthand for:
-     *
-     * {{{
-     * Stream.eval(KafkaTracer.create[F](config)).flatMap(kafkaTracer => producers.map(kafkaTracer.producer(_)))
-     * }}}
-     */
+      *
+      * The tracer is created once per stream evaluation, not once per emitted producer.
+      *
+      * Is shorthand for:
+      *
+      * {{{
+      * Stream.eval(KafkaTracer.create[F](config)).flatMap(kafkaTracer => producers.map(kafkaTracer.producer(_)))
+      * }}}
+      */
     def traced(
-                config: KafkaTracer.Config
-              )(implicit
-                ev: KafkaMessageKey[K],
-                F: Concurrent[F],
-                P: Parallel[F],
-                TP: TracerProvider[F]
-              ): Stream[F, TracedKafkaProducer[F, K, V]] =
+        config: KafkaTracer.Config
+    )(implicit
+        ev: KafkaMessageKey[K],
+        F: Concurrent[F],
+        P: Parallel[F],
+        TP: TracerProvider[F]
+    ): Stream[F, TracedKafkaProducer[F, K, V]] =
       Stream
         .eval(KafkaTracer.create[F](config))
         .flatMap(kafkaTracer => self.map(kafkaTracer.producer(_)))
