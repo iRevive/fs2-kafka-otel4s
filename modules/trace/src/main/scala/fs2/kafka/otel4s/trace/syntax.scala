@@ -19,6 +19,7 @@ package fs2.kafka.otel4s.trace
 import cats.Parallel
 import cats.effect.Concurrent
 import fs2.{Chunk, Stream}
+import fs2.kafka.KafkaProducer
 import fs2.kafka.consumer.KafkaConsumeChunk.CommitNow
 import fs2.kafka.{CommittableConsumerRecord, ConsumerRecord, KafkaConsumer}
 import org.typelevel.otel4s.trace.TracerProvider
@@ -205,9 +206,57 @@ trait TracedKafkaConsumerStreamTracingSyntax {
 
 }
 
+trait KafkaProducerStreamTracingSyntax {
+
+  implicit final class KafkaProducerStreamTracingOps[F[_], K, V](
+                                                                  private val self: Stream[F, KafkaProducer.WithSettings[F, K, V]]
+                                                                ) {
+
+    /** Binds a [[KafkaTracer]] to each emitted raw producer, yielding traced handles.
+     *
+     * Is shorthand for:
+     *
+     * {{{
+     * producers.map(kafkaTracer.producer(_))
+     * }}}
+     */
+    def traced(
+                kafkaTracer: KafkaTracer[F]
+              )(implicit
+                ev: KafkaMessageKey[K]
+              ): Stream[F, TracedKafkaProducer[F, K, V]] =
+      self.map(kafkaTracer.producer(_))
+
+    /** Creates a library-managed [[KafkaTracer]] from `config`, then binds it to each emitted raw producer.
+     *
+     * The tracer is created once per stream evaluation, not once per emitted producer.
+     *
+     * Is shorthand for:
+     *
+     * {{{
+     * Stream.eval(KafkaTracer.create[F](config)).flatMap(kafkaTracer => producers.map(kafkaTracer.producer(_)))
+     * }}}
+     */
+    def traced(
+                config: KafkaTracer.Config
+              )(implicit
+                ev: KafkaMessageKey[K],
+                F: Concurrent[F],
+                P: Parallel[F],
+                TP: TracerProvider[F]
+              ): Stream[F, TracedKafkaProducer[F, K, V]] =
+      Stream
+        .eval(KafkaTracer.create[F](config))
+        .flatMap(kafkaTracer => self.map(kafkaTracer.producer(_)))
+
+  }
+
+}
+
 /** Syntax imports for traced consumer chunk/record helpers and traced consumer stream helpers.
   */
 object syntax
     extends ConsumerTracingSyntax
     with KafkaConsumerStreamTracingSyntax
     with TracedKafkaConsumerStreamTracingSyntax
+    with KafkaProducerStreamTracingSyntax

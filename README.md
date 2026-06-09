@@ -5,15 +5,15 @@
 Add the trace module dependency:
 
 ```scala
-libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "0.1-81555d0-20260523T170927Z-SNAPSHOT"
+libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "0.1-d44d3ca-20260523T181015Z-SNAPSHOT"
 ```
 
-Create normal `fs2-kafka` settings first. If you want stable broker endpoint attributes on spans, configure them explicitly through `KafkaTracer.Config`.
+Create normal `fs2-kafka` producer settings first:
 
 ```scala
-import cats.effect.IO
-import fs2.kafka.{ConsumerSettings, Deserializer, ProducerSettings, Serializer}
-import fs2.kafka.otel4s.trace.KafkaTracer
+import cats.effect.{IO, Resource}
+import fs2.kafka.{KafkaProducer, ProducerSettings, Serializer}
+import fs2.kafka.otel4s.trace.{KafkaTracer, TracedKafkaProducer}
 import org.typelevel.otel4s.trace.TracerProvider
 
 val producerSettings: ProducerSettings[IO, String, String] =
@@ -24,54 +24,42 @@ val producerSettings: ProducerSettings[IO, String, String] =
     .withBootstrapServers("localhost:9092")
     .withClientId("orders-producer")
 
-val consumerSettings: ConsumerSettings[IO, String, String] =
-  ConsumerSettings[IO, String, String](
-    Deserializer[IO, String],
-    Deserializer[IO, String]
-  )
-    .withBootstrapServers("localhost:9092")
-    .withClientId("orders-consumer")
-    .withGroupId("orders-group")
+def createTracedProducer(
+    implicit tracerProvider: TracerProvider[IO]
+): Resource[IO, TracedKafkaProducer[IO, String, String]] =
+  for {
+    tracer <- KafkaTracer.resource[IO](KafkaTracer.Config.default)
+    // create normal producer
+    producer <- KafkaProducer.resource[IO, String, String](producerSettings)
+    // create traced producer
+  } yield tracer.producer(producer)
+```
+
+If you want broker-level endpoint attributes on emitted spans, configure them explicitly:
+
+```scala
+import fs2.kafka.otel4s.trace.KafkaTracer
 
 val tracerConfig: KafkaTracer.Config =
   KafkaTracer.Config.default
     .withServerAddress("kafka.internal", Some(9092))
 ```
 
-Create `KafkaTracer` once from the `TracerProvider`, then bind traced handles from normal `fs2-kafka` resources:
+## How To Use It
 
-```scala
-import cats.effect.Resource
-import fs2.kafka.{KafkaConsumer, KafkaProducer}
-import fs2.kafka.otel4s.trace.{TracedKafkaConsumer, TracedKafkaProducer}
+Bind a `KafkaTracer` to a concrete `KafkaProducer.WithSettings`, then call the traced producer exactly like the normal
+fs2-kafka producer.
 
-def createTracedProducer(
-    implicit tracerProvider: TracerProvider[IO]
-): Resource[IO, TracedKafkaProducer[IO, String, String]] =
-  for {
-    kafkaTracer <- KafkaTracer.resource[IO](tracerConfig)
-    producer <- KafkaProducer.resource[IO, String, String](producerSettings)
-  } yield kafkaTracer.producer(producer)
+If you want the most concise producer binding, import `fs2.kafka.otel4s.trace.syntax._`. That gives you:
 
-def createTracedConsumer(
-    implicit tracerProvider: TracerProvider[IO]
-): Resource[IO, TracedKafkaConsumer[IO, String, String]] =
-  for {
-    kafkaTracer <- KafkaTracer.resource[IO](tracerConfig)
-    consumer <- KafkaConsumer.resource[IO, String, String](consumerSettings)
-  } yield kafkaTracer.consumer(consumer)
-```
+- `.traced(...)` on `Stream[F, KafkaProducer.WithSettings[...]]`
 
-## Producer Usage
-
-Bind a `KafkaTracer` to a concrete `KafkaProducer.WithSettings`, then call the traced producer like the normal fs2-kafka producer.
-
-`produce` keeps the original fs2-kafka two-stage contract:
+The important part is that `produce` keeps the original fs2-kafka two-stage contract:
 
 - the outer effect stages the send
 - the inner effect waits for Kafka completion
 
-In the common case, use `produce(...).flatten`. If the inner effect is never run, Kafka completion is not awaited and send spans do not finish.
+So in the common case you want `produce(...).flatten`.
 
 ```scala
 import fs2.Chunk
@@ -104,9 +92,47 @@ def sendBatch(
     .flatten
 ```
 
-Transactional methods such as `produceTransactionally` remain available and traced:
+The syntax import lets you bind tracing at the stream boundary and keep the rest of the producer API unchanged:
 
 ```scala
+import fs2.Stream
+import fs2.kafka.otel4s.trace.syntax._
+
+def sendWithSyntax(
+    implicit tracerProvider: TracerProvider[IO]
+): IO[ProducerResult[String, String]] =
+  Stream
+    .resource(KafkaProducer.resource[IO, String, String](producerSettings))
+    .traced(KafkaTracer.Config.default)
+    .evalMap { producer =>
+      producer.produce(
+        ProducerRecords.one(
+        ProducerRecord("orders", "order-1", """{"status":"created"}""")
+        )
+      ).flatten
+    }
+    .compile
+    .onlyOrError
+```
+
+You can also inject trace headers without sending yet:
+
+```scala
+import fs2.kafka.ProducerRecord
+
+def prepareRecord(
+    producer: TracedKafkaProducer[IO, String, String]
+): IO[ProducerRecord[String, String]] =
+  producer.injectHeaders(
+    ProducerRecord("orders", "order-1", """{"status":"created"}""")
+  )
+```
+
+Transactional APIs remain available and traced:
+
+```scala
+import fs2.kafka.{ProducerRecords, ProducerResult}
+
 def sendTransactionally(
     producer: TracedKafkaProducer[IO, String, String]
 ): IO[ProducerResult[String, String]] =
@@ -117,18 +143,22 @@ def sendTransactionally(
   )
 ```
 
-`produce` injects propagation headers automatically. Use `injectHeaders` only when record construction and publication are decoupled and you need to preserve the current tracing context across that gap.
+## General Patterns
 
-```scala
-def prepareRecord(
-    producer: TracedKafkaProducer[IO, String, String]
-): IO[ProducerRecord[String, String]] =
-  producer.injectHeaders(
-    ProducerRecord("orders", "order-1", """{"status":"created"}""")
-  )
-```
+### Prefer `produce(...).flatten` at the call site
 
-For domain key types, define `KafkaMessageKey` so `messaging.kafka.message.key` can be populated. Return `None` when the key should not be exposed. If you change the key type via serializers, use `tracedWithSerializers`; plain `withSerializers` still emits spans, but it drops key-attribute derivation for the new key type.
+That is the simplest way to keep span lifetime aligned with Kafka acknowledgement.
+
+When you use stream syntax, the send path still remains `producer.produce(...).flatten`.
+
+### Reuse one traced producer per bound Kafka producer
+
+Create the `TracedKafkaProducer` once from the real producer resource and pass it through your application, instead of
+rebuilding it for every send.
+
+### Define `KafkaMessageKey` for domain keys
+
+If your producer key type is not already covered, define a canonical string representation for semantic attributes:
 
 ```scala
 import fs2.kafka.otel4s.trace.KafkaMessageKey
@@ -137,114 +167,112 @@ final class OrderId(val value: String)
 
 implicit val orderIdKafkaMessageKey: KafkaMessageKey[OrderId] =
   KafkaMessageKey.instance(id => Some(id.value))
+```
+
+Return `None` when the key should not be exposed as telemetry.
+
+### Prefer `tracedWithSerializers` over `withSerializers`
+
+If you need to change serializers on a traced producer and the key type changes, use `tracedWithSerializers`.
+
+```scala
+import fs2.kafka.otel4s.trace.{KafkaMessageKey, TracedKafkaProducer}
+
+final class RemappedKey(val value: String)
+
+implicit val remappedKeyMessageKey: KafkaMessageKey[RemappedKey] =
+  KafkaMessageKey.instance(key => Some(s"remapped:${key.value}"))
 
 def remapSerializers(
     producer: TracedKafkaProducer[IO, String, String]
-): TracedKafkaProducer[IO, OrderId, String] =
+): TracedKafkaProducer[IO, RemappedKey, String] =
   producer.tracedWithSerializers(
-    Serializer[IO, String].contramap[OrderId](_.value),
+    Serializer[IO, String].contramap[RemappedKey](_.value),
     Serializer[IO, String]
   )
 ```
 
-## Consumer Usage
+That keeps tracing semantics for the new key type, including `messaging.kafka.message.key`.
 
-Consumer tracing is explicit. The library does not try to transparently instrument every `KafkaConsumer` method.
+### Use `injectHeaders` when send and publish are decoupled
 
-`records`, `partitionedRecords`, and `partitionedStream` remain available on `TracedKafkaConsumer`, but spans are emitted only for explicit traced operations such as `consumeChunk`, `receive`, `process`, and the syntax helpers built on top of them.
+If you send records through a `TracedKafkaProducer`, trace headers are injected automatically during traced `produce`
+calls. You do not need to call `injectHeaders` in the normal send path.
 
-Import `fs2.kafka.otel4s.trace.syntax._` once and then choose the shape that matches your consumer:
+Use `injectHeaders` only when record construction and record publication are decoupled, for example when you need to
+prepare a record now and hand it off to some later send path while preserving the current tracing context.
 
-- `.consumeChunkTraced(...)` for chunk-oriented flows
-- `.recordsWithProcessTraced(...)` for `.records.evalMap(...)`-style flows
-- `receiveTraced` and `processTraced` when you need explicit boundaries inside chunked or partitioned streams
+### Configure stable endpoint attributes explicitly
 
-`.traced(...)` accepts either a bound `KafkaTracer` or a `KafkaTracer.Config`.
+`server.address` and `server.port` are not inferred from Kafka client internals. If you want them on spans, configure
+them through `KafkaTracer.Config`.
 
-### Chunk-Oriented Syntax
+## Pitfalls And Caveats
 
-This is the closest shape to existing `consumeChunk` usage.
+### `produce` is intentionally two-stage
 
-```scala
-import cats.syntax.all._
-import fs2.kafka.KafkaConsumer
-import fs2.kafka.consumer.KafkaConsumeChunk.CommitNow
-import fs2.kafka.otel4s.trace.syntax._
-
-def consumeChunks(
-    implicit kafkaTracer: KafkaTracer[IO]
-): IO[Nothing] =
-  KafkaConsumer
-    .stream[IO, String, String](consumerSettings)
-    .subscribeTo("orders")
-    .traced(kafkaTracer)
-    .consumeChunkTraced { chunk =>
-      chunk.traverse_(record => IO.println(s"Consumed chunk record: $record")).as(CommitNow)
-    }
-```
-
-`consumeChunkTraced` traces chunk delivery. If the business step needs per-record `process` spans, use `recordsWithProcessTraced` or local `processTraced` helpers.
-
-### Record-Oriented Syntax
-
-For `.records.evalMap(...)`-style consumers, prefer `recordsWithProcessTraced`.
+This is the most important caveat in the current API.
 
 ```scala
-import fs2.Stream
-import fs2.kafka.commitBatchWithin
-import fs2.kafka.otel4s.trace.syntax._
+import fs2.kafka.{ProducerRecord, ProducerRecords, ProducerResult}
+import fs2.kafka.otel4s.trace.TracedKafkaProducer
 
-import scala.concurrent.duration._
+def stagedOnly(
+    producer: TracedKafkaProducer[IO, String, String]
+): IO[IO[ProducerResult[String, String]]] =
+  producer.produce(
+    ProducerRecords.one(
+      ProducerRecord("orders", "order-1", """{"status":"created"}""")
+    )
+  )
 
-def consumeRecords(
-    implicit kafkaTracer: KafkaTracer[IO]
-): Stream[IO, Unit] =
-  KafkaConsumer
-    .stream[IO, String, String](consumerSettings)
-    .subscribeTo("orders")
-    .traced(kafkaTracer)
-    .recordsWithProcessTraced { committable =>
-      IO.println(s"Consumed record: $committable").as(committable.offset)
-    }
-    .through(commitBatchWithin[IO](500, 15.seconds))
+def fullyEvaluated(
+    producer: TracedKafkaProducer[IO, String, String]
+): IO[ProducerResult[String, String]] =
+  stagedOnly(producer).flatten
 ```
 
-### Local Syntax For Explicit Boundaries
+If you drop the inner await effect:
 
-When you are already working with chunked or partitioned consumer streams, local syntax makes the explicit tracing calls much lighter.
+- Kafka completion is never awaited
+- send-span finalization is delayed
+- the span/resource lifecycle effectively leaks until that inner effect is run or discarded with the whole effect graph
 
-```scala
-import fs2.kafka.otel4s.trace.TracedKafkaConsumer
-import fs2.kafka.otel4s.trace.syntax._
+If you want normal traced-send behavior, always evaluate the returned inner effect.
 
-def consumePartitioned(
-    implicit kafkaTracer: KafkaTracer[IO]
-): Stream[IO, Unit] =
-  KafkaConsumer
-    .stream[IO, String, String](consumerSettings)
-    .subscribeTo("orders")
-    .traced(kafkaTracer)
-    .flatMap { tracedConsumer =>
-      implicit val tc: TracedKafkaConsumer[IO, String, String] = tracedConsumer
+### This module is producer-only right now
 
-      tracedConsumer.partitionedStream.flatMap(
-        _.chunks.evalMap { chunk =>
-          chunk.receiveTraced {
-            chunk.traverse_(record =>
-              record.processTraced {
-                IO.println(s"Processed record: $record")
-              }
-            )
-          }
-        }
-      )
-    }
-```
+There is no consumer tracing API in this repository yet.
 
-## Notes
+### Duplicate propagation headers use last-match extraction
 
-- Reuse one `KafkaTracer` and one bound traced handle per producer or consumer resource.
-- `commitBatchWithin` remains standard `fs2-kafka`; use it normally after `recordsWithProcessTraced`.
-- Duplicate propagation headers use last-match extraction, matching OpenTelemetry Java Kafka instrumentation rather than the generic first-value propagator rule.
-- `injectHeaders` does not overwrite a recognized existing propagation context. If a record already carries trace headers, those headers continue to define the message creation context.
-- Real batch sends may emit per-record producer `create` spans plus a batch `send` span, with record-specific details attached as links rather than collapsed onto the batch span.
+When multiple Kafka headers share the same propagation key, extraction prefers the last matching value. This matches
+OpenTelemetry Java Kafka instrumentation rather than the generic first-value propagator rule.
+
+### Existing propagated context is preserved
+
+`injectHeaders` does not overwrite a recognized existing propagation context. If the record already carries trace
+headers, those headers continue to define the message creation context.
+
+### `withSerializers` is deprecated on traced producers
+
+`withSerializers` is still available because `TracedKafkaProducer` extends the fs2-kafka producer API, but it is not
+the safe traced path when the key type changes.
+
+- tracing still works
+- spans are still emitted
+- `messaging.kafka.message.key` derivation is dropped for the new key type
+
+Use `tracedWithSerializers` instead if you want to preserve key-aware tracing behavior.
+
+### Batch sends change span shape
+
+Single-message sends usually produce one producer `send` span.
+
+For real batches, the instrumentation may:
+
+- create per-record producer `create` spans
+- emit a client `send` span for the batch
+- attach per-record details on links instead of collapsing conflicting values onto the batch span
+
+That is expected and is how the implementation stays closer to messaging semantic-convention guidance.

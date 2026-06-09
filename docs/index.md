@@ -66,7 +66,11 @@ def createTracedConsumer(
 
 Bind a `KafkaTracer` to a concrete `KafkaProducer.WithSettings`, then call the traced producer like the normal fs2-kafka producer.
 
-`produce` keeps the original fs2-kafka two-stage contract:
+If you want the most concise producer binding, import `fs2.kafka.otel4s.trace.syntax._`. That gives you:
+
+- `.traced(...)` on `Stream[F, KafkaProducer.WithSettings[...]]`
+
+The important part is that `produce` keeps the original fs2-kafka two-stage contract:
 
 - the outer effect stages the send
 - the inner effect waits for Kafka completion
@@ -102,6 +106,29 @@ def sendBatch(
       )
     )
     .flatten
+```
+
+The syntax import lets you bind tracing at the stream boundary and keep the rest of the producer API unchanged:
+
+```scala mdoc:silent
+import fs2.Stream
+import fs2.kafka.otel4s.trace.syntax._
+
+def sendWithSyntax(
+    implicit tracerProvider: TracerProvider[IO]
+): IO[ProducerResult[String, String]] =
+  Stream
+    .resource(KafkaProducer.resource[IO, String, String](producerSettings))
+    .traced(KafkaTracer.Config.default)
+    .evalMap { producer =>
+      producer.produce(
+        ProducerRecords.one(
+        ProducerRecord("orders", "order-1", """{"status":"created"}""")
+        )
+      ).flatten
+    }
+    .compile
+    .onlyOrError
 ```
 
 Transactional methods such as `produceTransactionally` remain available and traced:
