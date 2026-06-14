@@ -17,6 +17,7 @@
 package fs2.kafka.otel4s.trace
 package internal
 
+import fs2.Chunk
 import fs2.kafka._
 import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.producer.RecordMetadata
@@ -93,6 +94,35 @@ private[otel4s] object Semconv {
     builder.result()
   }
 
+  def receiveSpanContext[K: KafkaMessageKey, V](
+      records: Chunk[ConsumerRecord[K, V]],
+      clientId: Option[String],
+      groupId: Option[String]
+  ): ReceiveSpanContext =
+    ReceiveSpanContext(
+      topics = records.iterator.map(_.topic).toSet,
+      partitions = records.iterator.map(_.partition).toSet,
+      recordCount = records.size,
+      messageKey = consumerSingleRecordMessageKey(records),
+      offset = consumerSingleRecordOffset(records),
+      clientId = clientId,
+      groupId = groupId
+    )
+
+  def processSpanContext[K: KafkaMessageKey, V](
+      record: ConsumerRecord[K, V],
+      clientId: Option[String],
+      groupId: Option[String]
+  ): ProcessSpanContext =
+    ProcessSpanContext(
+      topic = record.topic,
+      partition = record.partition,
+      offset = record.offset,
+      messageKey = KafkaMessageKey[K].toMessageKey(record.key),
+      clientId = clientId,
+      groupId = groupId
+    )
+
   def createSpanName(topic: String): String =
     s"create $topic"
 
@@ -131,6 +161,58 @@ private[otel4s] object Semconv {
     builder.addAll(Keys.DestinationPartitionId.maybe(record.partition.map(_.toString)))
     builder.addAll(Keys.KafkaMessageKey.maybe(KafkaMessageKey[K].toMessageKey(record.key)))
     builder.addAll(Keys.KafkaMessageTombstone.maybe(tombstoneAttribute(record.value)))
+
+    builder.result()
+  }
+
+  def receiveAttributes[K, V](
+      ctx: ReceiveSpanContext,
+      records: Chunk[ConsumerRecord[K, V]]
+  ): Attributes = {
+    val builder = baseBuilder(
+      operationName = "poll",
+      operationType = "receive",
+      topic = singleton(ctx.topics),
+      clientId = ctx.clientId,
+      consumerGroupName = ctx.groupId
+    )
+
+    builder.addAll(
+      Keys.DestinationPartitionId.maybe(consumerSingleLogicalPartition(records).map(_.toString))
+    )
+    builder.addAll(Keys.KafkaMessageKey.maybe(ctx.messageKey))
+    builder.addAll(Keys.KafkaMessageTombstone.maybe(consumerSingleRecordTombstone(records)))
+    builder.addAll(Keys.KafkaOffset.maybe(ctx.offset))
+    builder.addAll(Keys.BatchMessageCount.maybe(Option.when(ctx.recordCount > 1)(ctx.recordCount)))
+
+    builder.result()
+  }
+
+  def processAttributes[K, V](ctx: ProcessSpanContext, record: ConsumerRecord[K, V]): Attributes = {
+    val builder = baseBuilder(
+      operationName = "process",
+      operationType = "process",
+      topic = Some(ctx.topic),
+      clientId = ctx.clientId,
+      consumerGroupName = ctx.groupId
+    )
+
+    builder.addOne(Keys.DestinationPartitionId(ctx.partition.toString))
+    builder.addAll(Keys.KafkaMessageKey.maybe(ctx.messageKey))
+    builder.addAll(Keys.KafkaMessageTombstone.maybe(tombstoneAttribute(record.value)))
+    builder.addOne(Keys.KafkaOffset(ctx.offset))
+
+    builder.result()
+  }
+
+  def receiveLinkAttributes[K: KafkaMessageKey, V](record: ConsumerRecord[K, V]): Attributes = {
+    val builder = Attributes.newBuilder
+
+    builder.addOne(Keys.DestinationName(record.topic))
+    builder.addOne(Keys.DestinationPartitionId(record.partition.toString))
+    builder.addAll(Keys.KafkaMessageKey.maybe(KafkaMessageKey[K].toMessageKey(record.key)))
+    builder.addAll(Keys.KafkaMessageTombstone.maybe(tombstoneAttribute(record.value)))
+    builder.addOne(Keys.KafkaOffset(record.offset))
 
     builder.result()
   }
@@ -184,6 +266,27 @@ private[otel4s] object Semconv {
       .when(records.size == 1)(records.head.get)
       .flatMap(record => tombstoneAttribute(record.value))
 
+  private def consumerSingleRecordMessageKey[K: KafkaMessageKey, V](
+      records: Chunk[ConsumerRecord[K, V]]
+  ): Option[String] =
+    Option
+      .when(records.size == 1)(records.head)
+      .flatten
+      .flatMap(record => KafkaMessageKey[K].toMessageKey(record.key))
+
+  private def consumerSingleRecordTombstone[K, V](
+      records: Chunk[ConsumerRecord[K, V]]
+  ): Option[Boolean] =
+    Option
+      .when(records.size == 1)(records.head)
+      .flatten
+      .flatMap(record => tombstoneAttribute(record.value))
+
+  private def consumerSingleRecordOffset[K, V](
+      records: Chunk[ConsumerRecord[K, V]]
+  ): Option[Long] =
+    Option.when(records.size == 1)(records.head).flatten.map(_.offset)
+
   private def producerSingleLogicalPartition[K, V](
       records: ProducerRecords[K, V]
   ): Option[Int] = {
@@ -198,6 +301,11 @@ private[otel4s] object Semconv {
       .flatMap(singleton)
       .map(_._2)
   }
+
+  private def consumerSingleLogicalPartition[K, V](
+      records: Chunk[ConsumerRecord[K, V]]
+  ): Option[Int] =
+    singleton(records.iterator.map(record => record.topic -> record.partition).toSet).map(_._2)
 
   private def tombstoneAttribute(value: Any): Option[Boolean] =
     Option.when(value == null)(true)

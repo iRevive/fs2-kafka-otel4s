@@ -35,6 +35,10 @@ final class KafkaProducerSyntaxSuite extends KafkaTracingTestSupport {
               producer: KafkaProducer.WithSettings[IO, K, V]
           ): TracedKafkaProducer[IO, K, V] =
             expected.asInstanceOf[TracedKafkaProducer[IO, K, V]]
+          override def consumer[K: KafkaMessageKey, V](
+              consumer: KafkaConsumer[IO, K, V]
+          ): TracedKafkaConsumer[IO, K, V] =
+            ???
         }
         result <- Stream
           .emit(underlying)

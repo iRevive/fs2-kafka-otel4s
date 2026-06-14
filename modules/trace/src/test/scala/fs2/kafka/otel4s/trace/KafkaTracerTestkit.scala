@@ -17,7 +17,7 @@
 package fs2.kafka.otel4s.trace
 
 import cats.effect.{IO, Resource}
-import fs2.kafka.KafkaProducer
+import fs2.kafka.{KafkaConsumer, KafkaProducer}
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator
 import io.opentelemetry.context.propagation.TextMapPropagator
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder
@@ -35,6 +35,12 @@ final class KafkaTracerTestkit(testkit: OtelJavaTestkit[IO])(implicit
       config: KafkaTracer.Config = KafkaTracer.Config.default
   ): IO[TracedKafkaProducer[IO, K, V]] =
     KafkaTracer.create[IO](config).map(_.producer(producer))
+
+  def tracedConsumer[K: KafkaMessageKey, V](
+      consumer: KafkaConsumer[IO, K, V],
+      config: KafkaTracer.Config = KafkaTracer.Config.default
+  ): IO[TracedKafkaConsumer[IO, K, V]] =
+    KafkaTracer.create[IO](config).map(_.consumer(consumer))
 
   def finishedSpans: IO[List[SpanData]] =
     testkit.finishedSpans
