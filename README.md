@@ -5,7 +5,8 @@
 Add the trace module dependency:
 
 ```scala
-libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "0.1.0"
+resolvers += "central-snapshots" at "https://central.sonatype.com/repository/maven-snapshots/"
+libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "0.2-6b00feb-SNAPSHOT"
 ```
 
 Create normal `fs2-kafka` settings first. If you want stable broker endpoint attributes on spans, configure them explicitly through `KafkaTracer.Config`.
