@@ -1,4 +1,4 @@
-ThisBuild / tlBaseVersion := "0.1"
+ThisBuild / tlBaseVersion := "0.2"
 
 ThisBuild / organization := "io.github.irevive"
 ThisBuild / licenses := Seq(License.Apache2)
