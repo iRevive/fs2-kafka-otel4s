@@ -18,6 +18,7 @@ package fs2.kafka.otel4s.trace
 
 import cats.Parallel
 import cats.effect.Concurrent
+import cats.syntax.functor._
 import fs2.{Chunk, Stream}
 import fs2.kafka.KafkaProducer
 import fs2.kafka.consumer.KafkaConsumeChunk.CommitNow
@@ -253,6 +254,51 @@ trait KafkaProducerStreamTracingSyntax {
 
 }
 
+trait KafkaProducerTracingSyntax {
+
+  implicit final class KafkaProducerTracingOps[F[_], K, V](
+      private val self: KafkaProducer.WithSettings[F, K, V]
+  ) {
+
+    /** Binds a [[KafkaTracer]] to the raw producer, yielding traced variant.
+      *
+      * Is shorthand for:
+      *
+      * {{{
+      * kafkaTracer.producer(producer)
+      * }}}
+      */
+    def traced(
+        kafkaTracer: KafkaTracer[F]
+    )(implicit
+        ev: KafkaMessageKey[K]
+    ): TracedKafkaProducer[F, K, V] =
+      kafkaTracer.producer(self)
+
+    /** Creates a library-managed [[KafkaTracer]] from `config`, then binds it to the raw producer.
+      *
+      * Is shorthand for:
+      *
+      * {{{
+      * KafkaTracer.create[F](config).evalMap(kafkaTracer => kafkaTracer.producer(producer))
+      * }}}
+      */
+    def traced(
+        config: KafkaTracer.Config
+    )(implicit
+        ev: KafkaMessageKey[K],
+        F: Concurrent[F],
+        P: Parallel[F],
+        TP: TracerProvider[F]
+    ): F[TracedKafkaProducer[F, K, V]] =
+      KafkaTracer
+        .create[F](config)
+        .map(kafkaTracer => kafkaTracer.producer(self))
+
+  }
+
+}
+
 /** Syntax imports for traced consumer chunk/record helpers and traced consumer stream helpers.
   */
 object syntax
@@ -260,3 +306,4 @@ object syntax
     with KafkaConsumerStreamTracingSyntax
     with TracedKafkaConsumerStreamTracingSyntax
     with KafkaProducerStreamTracingSyntax
+    with KafkaProducerTracingSyntax
