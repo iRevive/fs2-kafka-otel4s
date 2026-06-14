@@ -16,11 +16,12 @@
 
 package fs2.kafka.otel4s.trace
 
+import cats.Parallel
 import cats.effect.Concurrent
 import cats.syntax.all._
 import fs2.{Chunk, Stream}
 import fs2.kafka.consumer.KafkaConsumeChunk.CommitNow
-import fs2.kafka.{CommittableConsumerRecord, ConsumerRecord, KafkaConsumer}
+import fs2.kafka.{CommittableConsumerRecord, CommittableOffsetBatch, ConsumerRecord, KafkaConsumer}
 import fs2.kafka.otel4s.trace.instances._
 import fs2.kafka.otel4s.trace.internal.Semconv
 import org.apache.kafka.clients.CommonClientConfigs
@@ -140,7 +141,7 @@ trait TracedKafkaConsumer[F[_], K, V] {
 
 object TracedKafkaConsumer {
 
-  final private[otel4s] class Impl[F[_]: Concurrent: Tracer, K: KafkaMessageKey, V](
+  final private[otel4s] class Impl[F[_]: Concurrent: Parallel: Tracer, K: KafkaMessageKey, V](
       override val underlying: KafkaConsumer[F, K, V],
       config: KafkaTracer.Config
   ) extends TracedKafkaConsumer[F, K, V] {
@@ -153,17 +154,27 @@ object TracedKafkaConsumer {
 
     override def consumeChunk(
         processor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
-    ): F[Nothing] =
+    ): F[Nothing] = {
+      def consume(chunk: Chunk[CommittableConsumerRecord[F, K, V]]): F[Unit] = {
+        val (offsets, records) =
+          chunk.mapAccumulate(CommittableOffsetBatch.empty[F])((offsetBatch, committableRecord) =>
+            (offsetBatch.updated(committableRecord.offset), committableRecord.record)
+          )
+
+        processor(records) >> offsets.commit
+      }
+
       underlying.partitionedStream
         .map(
           _.chunks.evalMap { chunk =>
-            receiveCommittable(chunk)(processor(chunk.map(_.record))).void
+            receiveCommittable(chunk)(consume(chunk))
           }
         )
         .parJoinUnbounded
         .drain
         .compile
         .onlyOrError
+    }
 
     override def receive[A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A] =
       if (records.isEmpty) fa
