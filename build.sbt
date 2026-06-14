@@ -54,7 +54,7 @@ lazy val trace = project
     buildInfoPackage := "fs2.kafka.otel4s.trace",
     buildInfoOptions += sbtbuildinfo.BuildInfoOption.PackagePrivate,
     buildInfoKeys := Seq[BuildInfoKey](
-      "version" -> version
+      "version" -> version.value
     )
   )
 
