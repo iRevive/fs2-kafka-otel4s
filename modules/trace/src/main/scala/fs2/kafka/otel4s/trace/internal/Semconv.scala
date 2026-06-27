@@ -19,7 +19,6 @@ package internal
 
 import fs2.Chunk
 import fs2.kafka._
-import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.producer.RecordMetadata
 import org.typelevel.otel4s.{Attribute, AttributeKey, Attributes}
 
@@ -48,16 +47,16 @@ private[otel4s] object Semconv {
 
   }
 
-  def sendSpanContext[F[_], K: KafkaMessageKey, V](
-      settings: ProducerSettings[F, K, V],
-      records: ProducerRecords[K, V]
+  def sendSpanContext[K: KafkaMessageKey, V](
+      records: ProducerRecords[K, V],
+      clientId: Option[String]
   ): SendSpanContext =
     SendSpanContext(
       topics = records.iterator.map(_.topic).toSet,
       partitions = records.iterator.flatMap(_.partition).toSet,
       recordCount = records.size,
       messageKey = producerSingleRecordMessageKey(records),
-      clientId = settings.properties.get(CommonClientConfigs.CLIENT_ID_CONFIG)
+      clientId = clientId
     )
 
   def sendAttributes[K, V](ctx: SendSpanContext, records: ProducerRecords[K, V]): Attributes = {
@@ -126,15 +125,15 @@ private[otel4s] object Semconv {
   def createSpanName(topic: String): String =
     s"create $topic"
 
-  def createAttributes[F[_], K: KafkaMessageKey, V](
-      settings: ProducerSettings[F, K, V],
-      record: ProducerRecord[K, V]
+  def createAttributes[K: KafkaMessageKey, V](
+      record: ProducerRecord[K, V],
+      clientId: Option[String]
   ): Attributes = {
     val builder = baseBuilder(
       operationName = "create",
       operationType = "create",
       topic = Some(record.topic),
-      clientId = settings.properties.get(CommonClientConfigs.CLIENT_ID_CONFIG),
+      clientId = clientId,
       consumerGroupName = None
     )
 

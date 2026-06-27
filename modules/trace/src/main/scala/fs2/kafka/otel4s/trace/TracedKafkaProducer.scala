@@ -23,7 +23,8 @@ import cats.syntax.all._
 import fs2.Chunk
 import fs2.kafka._
 import fs2.kafka.otel4s.trace.instances._
-import fs2.kafka.otel4s.trace.internal.Semconv
+import fs2.kafka.otel4s.trace.internal.{KafkaClientId, Semconv}
+import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.consumer.{ConsumerGroupMetadata, OffsetAndMetadata}
 import org.apache.kafka.common.{Metric, MetricName, PartitionInfo, TopicPartition}
 import org.typelevel.otel4s.Attributes
@@ -88,6 +89,12 @@ object TracedKafkaProducer {
       config: KafkaTracer.Config,
   ) extends TracedKafkaProducer[F, K, V] {
 
+    private val clientId =
+      KafkaClientId[F](
+        underlying.settings.properties.get(CommonClientConfigs.CLIENT_ID_CONFIG),
+        underlying.metrics
+      )
+
     override def injectHeaders(record: ProducerRecord[K, V]): F[ProducerRecord[K, V]] =
       Tracer[F]
         .joinOrRoot(record.headers)(Tracer[F].currentSpanContext)
@@ -107,62 +114,64 @@ object TracedKafkaProducer {
       if (records.isEmpty) {
         underlying.produce(records)
       } else {
-        prepareBatch(records).allocatedCase.flatMap { case (prepared, releasePrepared) =>
-          val spanContext = Semconv.sendSpanContext(underlying.settings, prepared.records)
-          val spanSetup = config.sendSpanSetup(spanContext)
+        clientId.get.flatMap { clientId =>
+          prepareBatch(records, clientId).allocatedCase.flatMap { case (prepared, releasePrepared) =>
+            val spanContext = Semconv.sendSpanContext(prepared.records, clientId)
+            val spanSetup = config.sendSpanSetup(spanContext)
 
-          val span = Tracer[F]
-            .spanBuilder(spanSetup.spanName)
-            .withSpanKind(prepared.sendKind)
-            .withFinalizationStrategy(spanSetup.finalizationStrategy)
-            .addAttributes(
-              Semconv.sendAttributes(spanContext, prepared.records) ++
-                config.constAttributes ++
-                spanSetup.attributes
-            )
-            .pipe { builder =>
-              prepared.sendLinks
-                .foldLeft(builder) { case (acc, (ctx, attributes)) =>
-                  acc.addLink(ctx, attributes)
-                }
-            }
-            .build
-
-          MonadCancelThrow[F].uncancelable { poll =>
-            span.resource.allocatedCase
-              .flatMap { case (res, release) =>
-                val outerProduce =
-                  if (prepared.sendKind == SpanKind.Producer)
-                    prepared.records
-                      .traverse(record => injectHeaders(record))
-                      .flatMap(record => underlying.produce(record))
-                  else
-                    underlying.produce(prepared.records)
-
-                poll(res.trace(outerProduce))
-                  .guaranteeCase {
-                    case Outcome.Succeeded(_) =>
-                      releasePrepared(Resource.ExitCase.Succeeded)
-                    case Outcome.Errored(e) =>
-                      releasePrepared(Resource.ExitCase.Errored(e)) *>
-                        release(Resource.ExitCase.Errored(e))
-                    case Outcome.Canceled() =>
-                      releasePrepared(Resource.ExitCase.Canceled) *>
-                        release(Resource.ExitCase.Canceled)
-                  }
-                  .map { awaitResult =>
-                    res
-                      .trace(awaitResult)
-                      .flatTap { result =>
-                        res.span.addAttributes(Semconv.sendResultAttributes(result))
-                      }
-                      .guaranteeCase {
-                        case Outcome.Succeeded(_) => release(Resource.ExitCase.Succeeded)
-                        case Outcome.Errored(e)   => release(Resource.ExitCase.Errored(e))
-                        case Outcome.Canceled()   => release(Resource.ExitCase.Canceled)
-                      }
+            val span = Tracer[F]
+              .spanBuilder(spanSetup.spanName)
+              .withSpanKind(prepared.sendKind)
+              .withFinalizationStrategy(spanSetup.finalizationStrategy)
+              .addAttributes(
+                Semconv.sendAttributes(spanContext, prepared.records) ++
+                  config.constAttributes ++
+                  spanSetup.attributes
+              )
+              .pipe { builder =>
+                prepared.sendLinks
+                  .foldLeft(builder) { case (acc, (ctx, attributes)) =>
+                    acc.addLink(ctx, attributes)
                   }
               }
+              .build
+
+            MonadCancelThrow[F].uncancelable { poll =>
+              span.resource.allocatedCase
+                .flatMap { case (res, release) =>
+                  val outerProduce =
+                    if (prepared.sendKind == SpanKind.Producer)
+                      prepared.records
+                        .traverse(record => injectHeaders(record))
+                        .flatMap(record => underlying.produce(record))
+                    else
+                      underlying.produce(prepared.records)
+
+                  poll(res.trace(outerProduce))
+                    .guaranteeCase {
+                      case Outcome.Succeeded(_) =>
+                        releasePrepared(Resource.ExitCase.Succeeded)
+                      case Outcome.Errored(e) =>
+                        releasePrepared(Resource.ExitCase.Errored(e)) *>
+                          release(Resource.ExitCase.Errored(e))
+                      case Outcome.Canceled() =>
+                        releasePrepared(Resource.ExitCase.Canceled) *>
+                          release(Resource.ExitCase.Canceled)
+                    }
+                    .map { awaitResult =>
+                      res
+                        .trace(awaitResult)
+                        .flatTap { result =>
+                          res.span.addAttributes(Semconv.sendResultAttributes(result))
+                        }
+                        .guaranteeCase {
+                          case Outcome.Succeeded(_) => release(Resource.ExitCase.Succeeded)
+                          case Outcome.Errored(e)   => release(Resource.ExitCase.Errored(e))
+                          case Outcome.Canceled()   => release(Resource.ExitCase.Canceled)
+                        }
+                    }
+                }
+            }
           }
         }
       }
@@ -283,7 +292,8 @@ object TracedKafkaProducer {
 
     private def prepareRecord(
         record: ProducerRecord[K, V],
-        createCreationContext: Boolean
+        createCreationContext: Boolean,
+        clientId: Option[String]
     ): Resource[F, PreparedRecord] =
       Resource
         .eval(Tracer[F].joinOrRoot(record.headers)(Tracer[F].currentSpanContext))
@@ -302,7 +312,7 @@ object TracedKafkaProducer {
               .spanBuilder(Semconv.createSpanName(record.topic))
               .withSpanKind(SpanKind.Producer)
               .addAttributes(
-                Semconv.createAttributes(underlying.settings, record) ++ config.constAttributes
+                Semconv.createAttributes(record, clientId) ++ config.constAttributes
               )
               .build
               .resource
@@ -328,11 +338,14 @@ object TracedKafkaProducer {
             )
         }
 
-    private def prepareBatch(records: ProducerRecords[K, V]): Resource[F, PreparedBatch] = {
+    private def prepareBatch(
+        records: ProducerRecords[K, V],
+        clientId: Option[String]
+    ): Resource[F, PreparedBatch] = {
       val useCreateSpans = records.size > 1
 
       records.toList
-        .traverse(prepareRecord(_, useCreateSpans))
+        .traverse(prepareRecord(_, useCreateSpans, clientId))
         .map { prepared =>
           val sendUsesOwnContext = prepared.forall(_.usesSendSpanAsCreationContext)
 
