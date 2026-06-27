@@ -23,7 +23,7 @@ import fs2.{Chunk, Stream}
 import fs2.kafka.consumer.KafkaConsumeChunk.CommitNow
 import fs2.kafka.{CommittableConsumerRecord, CommittableOffsetBatch, ConsumerRecord, KafkaConsumer}
 import fs2.kafka.otel4s.trace.instances._
-import fs2.kafka.otel4s.trace.internal.Semconv
+import fs2.kafka.otel4s.trace.internal.{KafkaClientId, Semconv}
 import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.typelevel.otel4s.Attributes
@@ -147,7 +147,10 @@ object TracedKafkaConsumer {
   ) extends TracedKafkaConsumer[F, K, V] {
 
     private val clientId =
-      underlying.settings.properties.get(CommonClientConfigs.CLIENT_ID_CONFIG)
+      KafkaClientId[F](
+        underlying.settings.properties.get(CommonClientConfigs.CLIENT_ID_CONFIG),
+        underlying.metrics
+      )
 
     private val groupId =
       underlying.settings.properties.get(ConsumerConfig.GROUP_ID_CONFIG)
@@ -179,15 +182,46 @@ object TracedKafkaConsumer {
     override def receive[A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A] =
       if (records.isEmpty) fa
       else {
-        val spanContext = Semconv.receiveSpanContext(records, clientId, groupId)
-        val spanSetup = config.receiveSpanSetup(spanContext)
-        creationContextLinks(records.toList).flatMap { links =>
+        clientId.get.flatMap { clientId =>
+          val spanContext = Semconv.receiveSpanContext(records, clientId, groupId)
+          val spanSetup = config.receiveSpanSetup(spanContext)
+          creationContextLinks(records.toList).flatMap { links =>
+            Tracer[F]
+              .spanBuilder(spanSetup.spanName)
+              .withSpanKind(SpanKind.Client)
+              .withFinalizationStrategy(spanSetup.finalizationStrategy)
+              .addAttributes(
+                Semconv.receiveAttributes(spanContext, records) ++
+                  config.constAttributes ++
+                  spanSetup.attributes
+              )
+              .pipe { builder =>
+                links.foldLeft(builder) { case (acc, (ctx, attributes)) =>
+                  acc.addLink(ctx, attributes)
+                }
+              }
+              .build
+              .surround(fa)
+          }
+        }
+      }
+
+    override def receiveCommittable[A](
+        records: Chunk[CommittableConsumerRecord[F, K, V]]
+    )(fa: F[A]): F[A] =
+      receive(records.map(_.record))(fa)
+
+    override def process[A](record: ConsumerRecord[K, V])(fa: F[A]): F[A] =
+      clientId.get.flatMap { clientId =>
+        val spanContext = Semconv.processSpanContext(record, clientId, groupId)
+        val spanSetup = config.processSpanSetup(spanContext)
+        creationContextLinks(record :: Nil).flatMap { links =>
           Tracer[F]
             .spanBuilder(spanSetup.spanName)
-            .withSpanKind(SpanKind.Client)
+            .withSpanKind(SpanKind.Consumer)
             .withFinalizationStrategy(spanSetup.finalizationStrategy)
             .addAttributes(
-              Semconv.receiveAttributes(spanContext, records) ++
+              Semconv.processAttributes(spanContext, record) ++
                 config.constAttributes ++
                 spanSetup.attributes
             )
@@ -200,34 +234,6 @@ object TracedKafkaConsumer {
             .surround(fa)
         }
       }
-
-    override def receiveCommittable[A](
-        records: Chunk[CommittableConsumerRecord[F, K, V]]
-    )(fa: F[A]): F[A] =
-      receive(records.map(_.record))(fa)
-
-    override def process[A](record: ConsumerRecord[K, V])(fa: F[A]): F[A] = {
-      val spanContext = Semconv.processSpanContext(record, clientId, groupId)
-      val spanSetup = config.processSpanSetup(spanContext)
-      creationContextLinks(record :: Nil).flatMap { links =>
-        Tracer[F]
-          .spanBuilder(spanSetup.spanName)
-          .withSpanKind(SpanKind.Consumer)
-          .withFinalizationStrategy(spanSetup.finalizationStrategy)
-          .addAttributes(
-            Semconv.processAttributes(spanContext, record) ++
-              config.constAttributes ++
-              spanSetup.attributes
-          )
-          .pipe { builder =>
-            links.foldLeft(builder) { case (acc, (ctx, attributes)) =>
-              acc.addLink(ctx, attributes)
-            }
-          }
-          .build
-          .surround(fa)
-      }
-    }
 
     override def process[A](record: CommittableConsumerRecord[F, K, V])(fa: F[A]): F[A] =
       process(record.record)(fa)
