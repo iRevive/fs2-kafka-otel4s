@@ -14,15 +14,13 @@ ThisBuild / scalaVersion := Scala213 // the default Scala
 
 ThisBuild / tlCiDependencyGraphJob := false
 
-ThisBuild / resolvers += Resolver.sonatypeCentralSnapshots
-
 ThisBuild / githubWorkflowJavaVersions := Seq(JavaSpec.temurin("17"))
 
 lazy val Versions = new {
-  val fs2kafka = "4.1-078c324-SNAPSHOT"
-  val otel4s = "1.0.0"
+  val fs2kafka = "4.1.0-RC1"
+  val otel4s = "1.0.1"
 
-  val munit = "1.2.4"
+  val munit = "1.3.3"
   val munitCatsEffect = "2.2.0"
 }
 
