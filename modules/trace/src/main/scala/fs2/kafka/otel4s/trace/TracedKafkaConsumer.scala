@@ -354,13 +354,16 @@ object TracedKafkaConsumer {
       override val underlying: KafkaConsumer[F, K, V]
   ) extends TracedKafkaConsumer[F, K, V] {
 
-    override def consumeChunkTraceReceive(
-        chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
-    ): F[Nothing] =
+    override def consumeChunkTraced(chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]): F[Nothing] =
       underlying.consumeChunk(chunkProcessor)
 
-    override def consumeChunkTraceProcess[A](recordProcessor: ConsumerRecord[K, V] => F[A]): F[Nothing] =
+    override def consumeRecordTraced[A](recordProcessor: ConsumerRecord[K, V] => F[A]): F[Nothing] =
       underlying.consumeChunk(records => records.traverseVoid(recordProcessor).as(CommitNow))
+
+    override def recordsTraced[A](f: CommittableConsumerRecord[F, K, V] => F[A]): Stream[F, A] =
+      underlying.partitionedStream
+        .map(_.evalMap(f))
+        .parJoinUnbounded
 
     override def receive[A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A] =
       fa
@@ -375,13 +378,6 @@ object TracedKafkaConsumer {
 
     override def process[A](record: CommittableConsumerRecord[F, K, V])(fa: F[A]): F[A] =
       fa
-
-    override def recordsWithProcess[A](
-        f: CommittableConsumerRecord[F, K, V] => F[A]
-    ): Stream[F, A] =
-      underlying.partitionedStream
-        .map(_.evalMap(f))
-        .parJoinUnbounded
 
   }
 
