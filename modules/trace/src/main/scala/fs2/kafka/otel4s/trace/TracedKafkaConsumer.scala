@@ -173,6 +173,15 @@ trait TracedKafkaConsumer[F[_], K, V] {
 
 object TracedKafkaConsumer {
 
+  /** Creates a no-op traced consumer bound to `underlying`.
+    *
+    * Consumer operations are delegated without emitting spans or extracting trace context.
+    */
+  def noop[F[_]: Concurrent: Parallel, K, V](
+      underlying: KafkaConsumer[F, K, V]
+  ): TracedKafkaConsumer[F, K, V] =
+    new Noop[F, K, V](underlying)
+
   final private[otel4s] class Impl[F[_]: Concurrent: Parallel: Tracer, K: KafkaMessageKey, V](
       override val underlying: KafkaConsumer[F, K, V],
       config: KafkaTracer.Config
@@ -338,6 +347,41 @@ object TracedKafkaConsumer {
             .joinOrRoot(record.headers)(Tracer[F].currentSpanContext)
             .map(_.tupleRight(Semconv.receiveLinkAttributes(record)).toList)
         }
+
+  }
+
+  final private class Noop[F[_]: Concurrent: Parallel, K, V](
+      override val underlying: KafkaConsumer[F, K, V]
+  ) extends TracedKafkaConsumer[F, K, V] {
+
+    override def consumeChunkTraceReceive(
+        chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
+    ): F[Nothing] =
+      underlying.consumeChunk(chunkProcessor)
+
+    override def consumeChunkTraceProcess[A](recordProcessor: ConsumerRecord[K, V] => F[A]): F[Nothing] =
+      underlying.consumeChunk(records => records.traverseVoid(recordProcessor).as(CommitNow))
+
+    override def receive[A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A] =
+      fa
+
+    override def receiveCommittable[A](
+        records: Chunk[CommittableConsumerRecord[F, K, V]]
+    )(fa: F[A]): F[A] =
+      fa
+
+    override def process[A](record: ConsumerRecord[K, V])(fa: F[A]): F[A] =
+      fa
+
+    override def process[A](record: CommittableConsumerRecord[F, K, V])(fa: F[A]): F[A] =
+      fa
+
+    override def recordsWithProcess[A](
+        f: CommittableConsumerRecord[F, K, V] => F[A]
+    ): Stream[F, A] =
+      underlying.partitionedStream
+        .map(_.evalMap(f))
+        .parJoinUnbounded
 
   }
 

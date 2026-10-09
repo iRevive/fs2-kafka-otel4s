@@ -356,6 +356,14 @@ object KafkaTracer {
 
   def apply[F[_]](implicit ev: KafkaTracer[F]): KafkaTracer[F] = ev
 
+  /** Creates a no-op [[KafkaTracer]].
+    *
+    * The returned tracer preserves the traced producer and consumer APIs, but does not emit spans or propagate trace
+    * context.
+    */
+  def noop[F[_]: Concurrent: Parallel]: KafkaTracer[F] =
+    new Noop[F]
+
   /** Creates a library-managed [[KafkaTracer]] from the implicit otel4s [[org.typelevel.otel4s.trace.TracerProvider]].
     *
     * The returned tracer is not yet bound to a specific Kafka producer. Bind it to a [[fs2.kafka.KafkaProducer]] so the
@@ -403,6 +411,20 @@ object KafkaTracer {
         consumer,
         config
       )
+
+  }
+
+  final private class Noop[F[_]: Concurrent: Parallel] extends KafkaTracer[F] {
+
+    override def producer[K: KafkaMessageKey, V](
+        producer: KafkaProducer.WithSettings[F, K, V]
+    ): TracedKafkaProducer[F, K, V] =
+      TracedKafkaProducer.noop(producer)
+
+    override def consumer[K: KafkaMessageKey, V](
+        consumer: KafkaConsumer[F, K, V]
+    ): TracedKafkaConsumer[F, K, V] =
+      TracedKafkaConsumer.noop(consumer)
 
   }
 

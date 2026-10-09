@@ -16,7 +16,7 @@
 
 package fs2.kafka.otel4s.trace
 
-import cats.Parallel
+import cats.{Applicative, Parallel}
 import cats.effect.syntax.all._
 import cats.effect.{MonadCancelThrow, Outcome, Resource}
 import cats.syntax.all._
@@ -135,6 +135,15 @@ trait TracedKafkaProducer[F[_], K, V] extends KafkaProducer.WithSettings[F, K, V
 }
 
 object TracedKafkaProducer {
+
+  /** Creates a no-op traced producer bound to `underlying`.
+    *
+    * Producer operations are delegated without emitting spans or propagating trace context.
+    */
+  def noop[F[_]: Applicative, K, V](
+      underlying: KafkaProducer.WithSettings[F, K, V]
+  ): TracedKafkaProducer[F, K, V] =
+    new Noop[F, K, V](underlying)
 
   final private[otel4s] class Impl[F[_]: MonadCancelThrow: Parallel: Tracer, K: KafkaMessageKey, V](
       underlying: KafkaProducer.WithSettings[F, K, V],
@@ -405,6 +414,61 @@ object TracedKafkaProducer {
           )
         }
     }
+  }
+
+  final private class Noop[F[_]: Applicative, K, V](underlying: KafkaProducer.WithSettings[F, K, V])
+      extends TracedKafkaProducer[F, K, V] {
+
+    override def injectHeaders(record: ProducerRecord[K, V]): F[ProducerRecord[K, V]] =
+      Applicative[F].pure(record)
+
+    override def injectHeaders(records: ProducerRecords[K, V]): F[ProducerRecords[K, V]] =
+      Applicative[F].pure(records)
+
+    override def produce(records: ProducerRecords[K, V]): F[F[ProducerResult[K, V]]] =
+      underlying.produce(records)
+
+    override def produceAndCommitTransactionally(
+        records: TransactionalProducerRecords[F, K, V]
+    ): F[ProducerResult[K, V]] =
+      underlying.produceAndCommitTransactionally(records)
+
+    override def sendOffsetsToTransaction(
+        offsets: Map[TopicPartition, OffsetAndMetadata],
+        groupMetadata: ConsumerGroupMetadata
+    ): F[Unit] =
+      underlying.sendOffsetsToTransaction(offsets, groupMetadata)
+
+    override def produceTransactionally(records: ProducerRecords[K, V]): F[ProducerResult[K, V]] =
+      underlying.produceTransactionally(records)
+
+    override def initTransactions: F[Unit] =
+      underlying.initTransactions
+
+    override def transaction: Resource[F, Unit] =
+      underlying.transaction
+
+    override def metrics: F[Map[MetricName, Metric]] =
+      underlying.metrics
+
+    override def partitionsFor(topic: String): F[List[PartitionInfo]] =
+      underlying.partitionsFor(topic)
+
+    override def settings: ProducerSettings[F, K, V] =
+      underlying.settings
+
+    override def withSerializers[K2, V2](
+        keySerializer: KeySerializer[F, K2],
+        valueSerializer: ValueSerializer[F, V2]
+    ): KafkaProducer.WithSettings[F, K2, V2] =
+      new Noop(underlying.withSerializers(keySerializer, valueSerializer))
+
+    override def tracedWithSerializers[K2: KafkaMessageKey, V2](
+        keySerializer: KeySerializer[F, K2],
+        valueSerializer: ValueSerializer[F, V2]
+    ): TracedKafkaProducer[F, K2, V2] =
+      new Noop(underlying.withSerializers(keySerializer, valueSerializer))
+
   }
 
 }

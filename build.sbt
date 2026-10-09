@@ -17,10 +17,10 @@ ThisBuild / tlCiDependencyGraphJob := false
 ThisBuild / githubWorkflowJavaVersions := Seq(JavaSpec.temurin("17"))
 
 lazy val Versions = new {
-  val fs2kafka = "4.1.0-RC1"
-  val otel4s = "1.0.1"
+  val fs2kafka = "4.1.0"
+  val otel4s = "1.1.0"
 
-  val munit = "1.3.3"
+  val munit = "1.3.6"
   val munitCatsEffect = "2.2.0"
 }
 
