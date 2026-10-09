@@ -176,66 +176,62 @@ object TracedKafkaProducer {
         underlying.produce(records)
       } else {
         clientId.get.flatMap { clientId =>
-          prepareBatch(records, clientId).allocatedCase.flatMap { case (prepared, releasePrepared) =>
+          prepareBatch(records, clientId).use { prepared =>
             val spanContext = Semconv.sendSpanContext(prepared.records, clientId)
             val spanSetup = config.sendSpanSetup(spanContext)
 
-            val span = Tracer[F]
-              .spanBuilder(spanSetup.spanName)
-              .withSpanKind(prepared.sendKind)
-              .withFinalizationStrategy(spanSetup.finalizationStrategy)
-              .addAttributes(
-                Semconv.sendAttributes(spanContext, prepared.records) ++
-                  config.constAttributes ++
-                  spanSetup.attributes
-              )
-              .pipe { builder =>
-                prepared.sendLinks
-                  .foldLeft(builder) { case (acc, (ctx, attributes)) =>
+            spanSetup.fold(producePrepared(prepared)) { setup =>
+              val span = Tracer[F]
+                .spanBuilder(setup.spanName)
+                .withSpanKind(prepared.sendKind)
+                .withFinalizationStrategy(setup.finalizationStrategy)
+                .addAttributes(
+                  Semconv.sendAttributes(spanContext, prepared.records) ++
+                    config.constAttributes ++
+                    setup.attributes
+                )
+                .pipe { builder =>
+                  prepared.sendLinks.foldLeft(builder) { case (acc, (ctx, attributes)) =>
                     acc.addLink(ctx, attributes)
                   }
-              }
-              .build
-
-            MonadCancelThrow[F].uncancelable { poll =>
-              span.resource.allocatedCase
-                .flatMap { case (res, release) =>
-                  val outerProduce =
-                    if (prepared.injectSendSpanContext)
-                      prepared.records
-                        .traverse(record => injectHeaders(record))
-                        .flatMap(record => underlying.produce(record))
-                    else
-                      underlying.produce(prepared.records)
-
-                  poll(res.trace(outerProduce))
-                    .guaranteeCase {
-                      case Outcome.Succeeded(_) =>
-                        releasePrepared(Resource.ExitCase.Succeeded)
-                      case Outcome.Errored(e) =>
-                        releasePrepared(Resource.ExitCase.Errored(e)) *>
-                          release(Resource.ExitCase.Errored(e))
-                      case Outcome.Canceled() =>
-                        releasePrepared(Resource.ExitCase.Canceled) *>
-                          release(Resource.ExitCase.Canceled)
-                    }
-                    .map { awaitResult =>
-                      res
-                        .trace(awaitResult)
-                        .flatTap { result =>
-                          res.span.addAttributes(Semconv.sendResultAttributes(result))
-                        }
-                        .guaranteeCase {
-                          case Outcome.Succeeded(_) => release(Resource.ExitCase.Succeeded)
-                          case Outcome.Errored(e)   => release(Resource.ExitCase.Errored(e))
-                          case Outcome.Canceled()   => release(Resource.ExitCase.Canceled)
-                        }
-                    }
                 }
+                .build
+
+              MonadCancelThrow[F].uncancelable { poll =>
+                span.resource.allocatedCase
+                  .flatMap { case (res, release) =>
+                    poll(res.trace(producePrepared(prepared)))
+                      .guaranteeCase {
+                        case Outcome.Succeeded(_) => MonadCancelThrow[F].unit
+                        case Outcome.Errored(e)   => release(Resource.ExitCase.Errored(e))
+                        case Outcome.Canceled()   => release(Resource.ExitCase.Canceled)
+                      }
+                      .map { awaitResult =>
+                        res
+                          .trace(awaitResult)
+                          .flatTap { result =>
+                            res.span.addAttributes(Semconv.sendResultAttributes(result))
+                          }
+                          .guaranteeCase {
+                            case Outcome.Succeeded(_) => release(Resource.ExitCase.Succeeded)
+                            case Outcome.Errored(e)   => release(Resource.ExitCase.Errored(e))
+                            case Outcome.Canceled()   => release(Resource.ExitCase.Canceled)
+                          }
+                      }
+                  }
+              }
             }
           }
         }
       }
+
+    private def producePrepared(prepared: PreparedBatch): F[F[ProducerResult[K, V]]] =
+      if (prepared.injectSendSpanContext)
+        prepared.records
+          .traverse(record => injectHeaders(record))
+          .flatMap(record => underlying.produce(record))
+      else
+        underlying.produce(prepared.records)
 
     override def produceAndCommitTransactionally(
         records: TransactionalProducerRecords[F, K, V]

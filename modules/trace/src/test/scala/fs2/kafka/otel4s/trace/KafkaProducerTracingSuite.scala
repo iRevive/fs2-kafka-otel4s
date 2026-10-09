@@ -120,6 +120,26 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
       }
   }
 
+  test("withoutSendSpans suppresses the span without suppressing the record") {
+    KafkaTracerTestkit
+      .create()
+      .use { testkit =>
+        val config = KafkaTracer.Config.default.withoutSendSpans
+
+        for {
+          producer <- StubKafkaProducer.recorder[String, String]()
+          tracedProducer <- testkit.tracedProducer(producer, config)
+          _ <- tracedProducer.produce(ProducerRecords.one(ProducerRecord("topic", "key", "value"))).flatten
+          produced <- producer.getCaptured
+          spans <- testkit.finishedSpans
+        } yield {
+          assertEquals(produced.size, 1)
+          assertEquals(produced.head.get.topic, "topic")
+          assertEquals(spans, Nil)
+        }
+      }
+  }
+
   test("single-message send adds broker partition and offset after completion") {
     KafkaTracerTestkit
       .create()
@@ -524,19 +544,21 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
               )
             )
             .withSendSpanSetup { ctx =>
-              KafkaTracer.Config.SpanSetup(
-                spanName = s"publish ${ctx.topics.headOption.getOrElse("unknown")} ${ctx.recordCount}",
-                attributes = Attributes(
-                  MessagingExperimentalAttributes.MessagingOperationName("publish"),
-                  MessagingExperimentalAttributes.MessagingOperationType("publish")
-                ),
-                finalizationStrategy = { case Resource.ExitCase.Succeeded =>
-                  SpanFinalizer.addAttribute(
-                    MessagingExperimentalAttributes.MessagingBatchMessageCount(
-                      ctx.recordCount.toLong
+              Some(
+                KafkaTracer.Config.SpanSetup.Send(
+                  spanName = s"publish ${ctx.topics.headOption.getOrElse("unknown")} ${ctx.recordCount}",
+                  attributes = Attributes(
+                    MessagingExperimentalAttributes.MessagingOperationName("publish"),
+                    MessagingExperimentalAttributes.MessagingOperationType("publish")
+                  ),
+                  finalizationStrategy = { case Resource.ExitCase.Succeeded =>
+                    SpanFinalizer.addAttribute(
+                      MessagingExperimentalAttributes.MessagingBatchMessageCount(
+                        ctx.recordCount.toLong
+                      )
                     )
-                  )
-                }
+                  }
+                )
               )
             }
 

@@ -35,7 +35,7 @@ import scala.util.chaining._
   *
   * Unlike producer tracing, consumer tracing cannot be a fully transparent drop-in replacement, because the important
   * `process` boundary lives in user code. This handle keeps the association with a specific [[fs2.kafka.KafkaConsumer]]
-  * while still making `receive` and `process` explicit.
+  * while still making consumer tracing explicit.
   */
 trait TracedKafkaConsumer[F[_], K, V] {
 
@@ -46,7 +46,7 @@ trait TracedKafkaConsumer[F[_], K, V] {
   /** Delegates to `underlying.records`.
     *
     * Record emission itself is not treated as processing. Wrap the actual business logic with `process` or use
-    * [[recordsWithProcess]] for the common `evalMap` shape.
+    * [[recordsTraced]] for the common `evalMap` shape.
     */
   final def records: Stream[F, CommittableConsumerRecord[F, K, V]] =
     underlying.records
@@ -70,33 +70,40 @@ trait TracedKafkaConsumer[F[_], K, V] {
   /** Delegates to `underlying.consumeChunk` without adding tracing.
     *
     * This passthrough keeps raw chunk-oriented `fs2-kafka` code available on the traced handle. Use
-    * [[consumeChunkTraceReceive]] when you want chunk-level `receive` spans, or [[consumeChunkTraceProcess]] when you
-    * want per-record `process` spans around record handling.
+    * [[consumeChunkTraced]] or [[consumeRecordTraced]] when you want `receive`, per-record `process`, and owned
+    * `commit` tracing.
     */
   final def consumeChunk(
       chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
   )(implicit F: Concurrent[F], P: Parallel[F]): F[Nothing] =
     underlying.consumeChunk(chunkProcessor)
 
-  /** Consume from all assigned partitions concurrently, tracing delivery of each emitted chunk.
+  /** Consume from all assigned partitions concurrently, tracing each emitted chunk.
     *
-    * Each emitted committable chunk is wrapped in a chunk-level `receive` span via [[receiveCommittable]]. The supplied
-    * `chunkProcessor` receives the plain [[ConsumerRecord]] values for that chunk. Offsets from the corresponding
-    * committable records are collected and committed after the callback effect completes successfully.
+    * Each emitted committable chunk is wrapped in a chunk-level `receive` span via [[receiveCommittable]], then in a
+    * `process` span for each record while the supplied `chunkProcessor` runs. The callback receives the plain
+    * [[ConsumerRecord]] values for that chunk. Offsets from the corresponding committable records are collected and
+    * committed after the callback effect completes successfully inside a `commit` span.
     *
-    * This helper models chunk delivery with `receive` spans only. If you want per-record `process` spans, use
-    * [[consumeChunkTraceProcess]], [[recordsWithProcess]], or wrap explicit record handling with `process`.
+    * Configure [[KafkaTracer.Config.withoutReceiveSpans]], [[KafkaTracer.Config.withoutProcessSpans]], or
+    * [[KafkaTracer.Config.withoutCommitSpans]] to suppress individual spans without changing consumption or commit
+    * behavior.
     */
-  def consumeChunkTraceReceive(chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]): F[Nothing]
+  def consumeChunkTraced(chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]): F[Nothing]
 
-  /** Consume from all assigned partitions concurrently, tracing processing of each record in each emitted chunk.
+  /** Consume from all assigned partitions concurrently, tracing each emitted chunk.
     *
     * Each emitted committable chunk is split into offsets and plain [[ConsumerRecord]] values. The supplied
     * `recordProcessor` is evaluated once per record inside `process`, so each record gets its own `process` span using
-    * trace context extracted from that record's headers when available. Offsets from the corresponding committable
-    * records are collected and committed after all records in the chunk have been processed successfully.
+    * trace context extracted from that record's headers when available. The chunk is wrapped in a `receive` span, and
+    * offsets from the corresponding committable records are collected and committed after all records have been
+    * processed successfully inside a `commit` span.
+    *
+    * Configure [[KafkaTracer.Config.withoutReceiveSpans]], [[KafkaTracer.Config.withoutProcessSpans]], or
+    * [[KafkaTracer.Config.withoutCommitSpans]] to suppress individual spans without changing consumption or commit
+    * behavior.
     */
-  def consumeChunkTraceProcess[A](recordProcessor: ConsumerRecord[K, V] => F[A]): F[Nothing]
+  def consumeRecordTraced[A](recordProcessor: ConsumerRecord[K, V] => F[A]): F[Nothing]
 
   /** Evaluates `fa` inside a `poll` / `receive` span representing delivery of a non-committable chunk of records to
     * application code.
@@ -155,8 +162,12 @@ trait TracedKafkaConsumer[F[_], K, V] {
     *   )
     *   .parJoinUnbounded
     * }}}
+    *
+    * This method does not commit offsets or emit `commit` spans. Use it with a downstream commit pipe such as
+    * `commitBatchWithin`; generic commit pipes only receive offsets, not the consumed records required for Kafka span
+    * attributes.
     */
-  def recordsWithProcess[A](f: CommittableConsumerRecord[F, K, V] => F[A]): Stream[F, A]
+  def recordsTraced[A](f: CommittableConsumerRecord[F, K, V] => F[A]): Stream[F, A]
 
 }
 
@@ -185,27 +196,31 @@ object TracedKafkaConsumer {
     private val groupId =
       underlying.settings.properties.get(ConsumerConfig.GROUP_ID_CONFIG)
 
-    override def consumeChunkTraceReceive(
+    override def consumeChunkTraced(
         chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
     ): F[Nothing] = {
       def handleChunk(chunk: Chunk[CommittableConsumerRecord[F, K, V]]): F[Unit] = {
         val (offsets, records) = offsetsAndRecords(chunk)
 
-        receiveCommittable(chunk)(chunkProcessor(records)) >> commit(records)(offsets.commit)
+        receiveCommittable(chunk)(processAll(records)(chunkProcessor(records))) >> commit(records)(offsets.commit)
       }
 
       handleChunkImpl(handleChunk)
     }
 
-    override def consumeChunkTraceProcess[A](recordProcessor: ConsumerRecord[K, V] => F[A]): F[Nothing] = {
+    override def consumeRecordTraced[A](recordProcessor: ConsumerRecord[K, V] => F[A]): F[Nothing] = {
       def handleChunk(chunk: Chunk[CommittableConsumerRecord[F, K, V]]): F[Unit] = {
         val (offsets, records) = offsetsAndRecords(chunk)
 
-        records.traverseVoid(record => process(record)(recordProcessor(record))) >> commit(records)(offsets.commit)
+        receiveCommittable(chunk)(records.traverseVoid(record => process(record)(recordProcessor(record)))) >>
+          commit(records)(offsets.commit)
       }
 
       handleChunkImpl(handleChunk)
     }
+
+    private def processAll[A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A] =
+      records.toList.foldRight(fa)((record, acc) => process(record)(acc))
 
     private def offsetsAndRecords(
         chunk: Chunk[CommittableConsumerRecord[F, K, V]]
@@ -228,24 +243,26 @@ object TracedKafkaConsumer {
         clientId.get.flatMap { clientId =>
           val spanContext = Semconv.receiveSpanContext(records, clientId, groupId)
           val spanSetup = config.receiveSpanSetup(spanContext)
-          recordTraceContextLinks(records.toList).flatMap { links =>
-            Tracer[F]
-              .spanBuilder(spanSetup.spanName)
-              .root
-              .withSpanKind(SpanKind.Client)
-              .withFinalizationStrategy(spanSetup.finalizationStrategy)
-              .addAttributes(
-                Semconv.receiveAttributes(spanContext, records) ++
-                  config.constAttributes ++
-                  spanSetup.attributes
-              )
-              .pipe { builder =>
-                links.foldLeft(builder) { case (acc, (ctx, attributes)) =>
-                  acc.addLink(ctx, attributes)
+          spanSetup.fold(fa) { setup =>
+            recordTraceContextLinks(records.toList).flatMap { links =>
+              Tracer[F]
+                .spanBuilder(setup.spanName)
+                .root
+                .withSpanKind(SpanKind.Client)
+                .withFinalizationStrategy(setup.finalizationStrategy)
+                .addAttributes(
+                  Semconv.receiveAttributes(spanContext, records) ++
+                    config.constAttributes ++
+                    setup.attributes
+                )
+                .pipe { builder =>
+                  links.foldLeft(builder) { case (acc, (ctx, attributes)) =>
+                    acc.addLink(ctx, attributes)
+                  }
                 }
-              }
-              .build
-              .surround(fa)
+                .build
+                .surround(fa)
+            }
           }
         }
       }
@@ -259,24 +276,26 @@ object TracedKafkaConsumer {
       clientId.get.flatMap { clientId =>
         val spanContext = Semconv.processSpanContext(record, clientId, groupId)
         val spanSetup = config.processSpanSetup(spanContext)
-        recordTraceContextLinks(record :: Nil).flatMap { links =>
-          Tracer[F]
-            .spanBuilder(spanSetup.spanName)
-            .root
-            .withSpanKind(SpanKind.Consumer)
-            .withFinalizationStrategy(spanSetup.finalizationStrategy)
-            .addAttributes(
-              Semconv.processAttributes(spanContext, record) ++
-                config.constAttributes ++
-                spanSetup.attributes
-            )
-            .pipe { builder =>
-              links.foldLeft(builder) { case (acc, (ctx, attributes)) =>
-                acc.addLink(ctx, attributes)
+        spanSetup.fold(fa) { setup =>
+          recordTraceContextLinks(record :: Nil).flatMap { links =>
+            Tracer[F]
+              .spanBuilder(setup.spanName)
+              .root
+              .withSpanKind(SpanKind.Consumer)
+              .withFinalizationStrategy(setup.finalizationStrategy)
+              .addAttributes(
+                Semconv.processAttributes(spanContext, record) ++
+                  config.constAttributes ++
+                  setup.attributes
+              )
+              .pipe { builder =>
+                links.foldLeft(builder) { case (acc, (ctx, attributes)) =>
+                  acc.addLink(ctx, attributes)
+                }
               }
-            }
-            .build
-            .surround(fa)
+              .build
+              .surround(fa)
+          }
         }
       }
 
@@ -290,20 +309,22 @@ object TracedKafkaConsumer {
           val spanContext = Semconv.commitSpanContext(records, clientId, groupId)
           val spanSetup = config.commitSpanSetup(spanContext)
 
-          Tracer[F]
-            .spanBuilder(spanSetup.spanName)
-            .withSpanKind(SpanKind.Client)
-            .withFinalizationStrategy(spanSetup.finalizationStrategy)
-            .addAttributes(
-              Semconv.commitAttributes(spanContext, records) ++
-                config.constAttributes ++
-                spanSetup.attributes
-            )
-            .build
-            .surround(fa)
+          spanSetup.fold(fa) { setup =>
+            Tracer[F]
+              .spanBuilder(setup.spanName)
+              .withSpanKind(SpanKind.Client)
+              .withFinalizationStrategy(setup.finalizationStrategy)
+              .addAttributes(
+                Semconv.commitAttributes(spanContext, records) ++
+                  config.constAttributes ++
+                  setup.attributes
+              )
+              .build
+              .surround(fa)
+          }
         }
 
-    override def recordsWithProcess[A](
+    override def recordsTraced[A](
         f: CommittableConsumerRecord[F, K, V] => F[A]
     ): Stream[F, A] =
       underlying.partitionedStream
@@ -333,13 +354,16 @@ object TracedKafkaConsumer {
       override val underlying: KafkaConsumer[F, K, V]
   ) extends TracedKafkaConsumer[F, K, V] {
 
-    override def consumeChunkTraceReceive(
-        chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
-    ): F[Nothing] =
+    override def consumeChunkTraced(chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]): F[Nothing] =
       underlying.consumeChunk(chunkProcessor)
 
-    override def consumeChunkTraceProcess[A](recordProcessor: ConsumerRecord[K, V] => F[A]): F[Nothing] =
+    override def consumeRecordTraced[A](recordProcessor: ConsumerRecord[K, V] => F[A]): F[Nothing] =
       underlying.consumeChunk(records => records.traverseVoid(recordProcessor).as(CommitNow))
+
+    override def recordsTraced[A](f: CommittableConsumerRecord[F, K, V] => F[A]): Stream[F, A] =
+      underlying.partitionedStream
+        .map(_.evalMap(f))
+        .parJoinUnbounded
 
     override def receive[A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A] =
       fa
@@ -354,13 +378,6 @@ object TracedKafkaConsumer {
 
     override def process[A](record: CommittableConsumerRecord[F, K, V])(fa: F[A]): F[A] =
       fa
-
-    override def recordsWithProcess[A](
-        f: CommittableConsumerRecord[F, K, V] => F[A]
-    ): Stream[F, A] =
-      underlying.partitionedStream
-        .map(_.evalMap(f))
-        .parJoinUnbounded
 
   }
 
