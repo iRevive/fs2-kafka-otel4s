@@ -5,7 +5,7 @@
 Add the trace module dependency:
 
 ```scala
-libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "0.2-c87fd15-20260712T075801Z-SNAPSHOT"
+libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "0.2-3c52470-20260916T140549Z-SNAPSHOT"
 ```
 
 Create normal `fs2-kafka` settings first. If you want stable broker endpoint attributes on spans, configure them explicitly through `KafkaTracer.Config`.
@@ -217,43 +217,42 @@ def remapSerializers(
 
 Consumer tracing is explicit. The library does not try to transparently instrument every `KafkaConsumer` method.
 
-`records`, `partitionedRecords`, `partitionedStream`, and `consumeChunk` remain available on `TracedKafkaConsumer`, but `consumeChunk` is a raw passthrough and does not add tracing. Spans are emitted only for explicit traced operations such as `consumeChunkTraceReceive`, `consumeChunkTraceProcess`, `receive`, `process`, the commit spans owned by the traced chunk helpers, and the syntax helpers built on top of them.
+`records`, `partitionedRecords`, `partitionedStream`, and `consumeChunk` remain available on `TracedKafkaConsumer`, but `consumeChunk` is a raw passthrough and does not add tracing. Spans are emitted only for explicit traced operations such as `consumeChunkTraced`, `recordsTraced`, `receive`, `process`, the commit spans owned by traced chunk helpers, and the syntax helpers built on top of them.
 
 Import `fs2.kafka.otel4s.trace.syntax._` once and then choose the shape that matches your consumer:
 
 - `.consumeChunk(...)` for raw, untraced chunk-oriented flows
-- `.consumeChunkTraceProcess(...)` for chunk-oriented flows with per-record `process` spans
-- `.consumeChunkTraceReceive(...)` for chunk-oriented flows with a chunk-level `receive` span
-- `.recordsWithProcessTraced(...)` for `.records.evalMap(...)`-style flows
+- `.consumeChunkTraced(...)` for chunk-callback flows with `receive`, per-record `process`, and owned `commit` spans
+- `.consumeRecordTraced(...)` for per-record callback flows with `receive`, per-record `process`, and owned `commit` spans
+- `.recordsTraced(...)` for `.records.evalMap(...)`-style flows with `receive` and per-record `process` spans
 - `receiveTraced` and `processTraced` when you need explicit boundaries inside chunked or partitioned streams
 
 `.traced(...)` accepts either a bound `KafkaTracer` or a `KafkaTracer.Config`.
 
 ### Chunk-Oriented Syntax
 
-Use `consumeChunkTraceProcess` when chunk-oriented code performs per-record business logic. It consumes chunks from all assigned
-partitions, wraps each record callback in a `process` span, and commits offsets after all records in the chunk have
-been processed successfully. The final offset commit is wrapped in a `commit` span with
-`messaging.operation.type=settle`.
+`consumeChunkTraced` and `consumeRecordTraced` consume chunks from all assigned partitions concurrently. They create a
+chunk-level `receive` span, add a `process` span for every record, and commit offsets after the callback has completed
+successfully. The owned final offset commit is wrapped in a `commit` span with `messaging.operation.type=settle`.
+
+The chunk callback overload wraps the entire callback in the `process` span for every record in its chunk. The
+per-record callback overload evaluates each callback in its corresponding `process` span.
 
 ```scala
 import fs2.kafka.KafkaConsumer
 import fs2.kafka.otel4s.trace.syntax._
 
-def consumeChunksWithProcessTrace(
+def consumeChunks(
     implicit kafkaTracer: KafkaTracer[IO]
 ): IO[Nothing] =
   KafkaConsumer
     .stream[IO, String, String](consumerSettings)
     .subscribeTo("orders")
     .traced(kafkaTracer)
-    .consumeChunkTraceProcess { record =>
+    .consumeRecordTraced { record =>
       IO.println(s"Processed record: $record")
     }
 ```
-
-Use `consumeChunkTraceReceive` when the operation is naturally chunk-scoped and you want a chunk-level `receive` span around the
-whole callback.
 
 ```scala
 import cats.syntax.all._
@@ -261,25 +260,27 @@ import fs2.kafka.KafkaConsumer
 import fs2.kafka.consumer.KafkaConsumeChunk.CommitNow
 import fs2.kafka.otel4s.trace.syntax._
 
-def consumeChunksWithReceiveTrace(
+def consumeChunkBatches(
     implicit kafkaTracer: KafkaTracer[IO]
 ): IO[Nothing] =
   KafkaConsumer
     .stream[IO, String, String](consumerSettings)
     .subscribeTo("orders")
     .traced(kafkaTracer)
-    .consumeChunkTraceReceive { chunk =>
+    .consumeChunkTraced { chunk =>
       chunk.traverse_(record => IO.println(s"Received record: $record")).as(CommitNow)
     }
 ```
 
-`consumeChunkTraceReceive` creates a chunk-level `receive` span and a `commit` span around the owned offset commit, but does not automatically create per-record `process` spans. Use `consumeChunkTraceProcess`, `recordsWithProcessTraced`,
-or local `processTraced` helpers when the business step needs per-record processing spans. Use `consumeChunk` only when
-you intentionally want the raw `fs2-kafka` behavior without tracing.
+By default, both traced chunk helpers create all three span types. Use `KafkaTracer.Config.withoutReceiveSpans`,
+`withoutProcessSpans`, or `withoutCommitSpans` to suppress individual span types without changing processing or commit
+behavior. Use `consumeChunk` only when you intentionally want raw `fs2-kafka` behavior without tracing.
 
 ### Record-Oriented Syntax
 
-For `.records.evalMap(...)`-style consumers, prefer `recordsWithProcessTraced`.
+For `.records.evalMap(...)`-style consumers, prefer `recordsTraced` together with `commitBatchWithin`. It creates
+`receive` and per-record `process` spans but intentionally does not commit offsets or emit `commit` spans: the
+downstream commit pipe owns commits.
 
 ```scala
 import fs2.Stream
@@ -295,7 +296,7 @@ def consumeRecords(
     .stream[IO, String, String](consumerSettings)
     .subscribeTo("orders")
     .traced(kafkaTracer)
-    .recordsWithProcessTraced { committable =>
+    .recordsTraced { committable =>
       IO.println(s"Consumed record: $committable").as(committable.offset)
     }
     .through(commitBatchWithin[IO](500, 15.seconds))
@@ -336,7 +337,7 @@ def consumePartitioned(
 ## Notes
 
 - Reuse one `KafkaTracer` and one bound traced handle per producer or consumer resource.
-- `commitBatchWithin` remains standard `fs2-kafka`; use it normally after `recordsWithProcessTraced`. Generic downstream commit pipes are not traced because they only receive offsets, not the consumed records needed for Kafka span attributes.
+- `commitBatchWithin` remains standard `fs2-kafka`; use it normally after `recordsTraced`. Generic downstream commit pipes are not traced because they only receive offsets, not the consumed records needed for Kafka span attributes.
 - Duplicate propagation headers use last-match extraction, matching OpenTelemetry Java Kafka instrumentation rather than the generic first-value propagator rule.
 - `injectHeaders` does not overwrite recognized record trace context. If a record already carries valid trace headers, those headers are preserved.
 - The default `PerRecordSpans` mode may emit one producer `create` span per record plus a batch `send` span. Use `SharedSendSpan` when lower telemetry volume is more important than distinct per-record trace contexts and producer-side details.

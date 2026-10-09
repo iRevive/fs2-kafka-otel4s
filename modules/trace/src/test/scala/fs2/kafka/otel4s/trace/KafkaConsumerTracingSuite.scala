@@ -55,7 +55,7 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
       }
   }
 
-  test("consumeChunkTraceReceive traces chunk delivery, invokes the processor, and traces commit") {
+  test("consumeChunkTraced(chunk) traces delivery, processing, and commit") {
     KafkaTracerTestkit
       .create()
       .use { testkit =>
@@ -69,7 +69,7 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
             groupId = "consumer-group"
           )
           traced <- testkit.tracedConsumer[String, String](consumer)
-          _ <- traced.consumeChunkTraceReceive { chunk =>
+          _ <- traced.consumeChunkTraced { chunk =>
             processed.set(Some(chunk)).as(CommitNow)
           }.attempt
           seen <- processed.get
@@ -99,6 +99,15 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
                 ),
                 root(
                   SpanExpectation
+                    .consumer("process topic")
+                    .scopeName("fs2.kafka")
+                    .attributesSubset(
+                      MessagingExperimentalAttributes.MessagingOperationName("process"),
+                      MessagingExperimentalAttributes.MessagingOperationType("process")
+                    )
+                ),
+                root(
+                  SpanExpectation
                     .client("commit topic")
                     .scopeName("fs2.kafka")
                     .attributesSubset(
@@ -120,7 +129,59 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
       }
   }
 
-  test("consumeChunkTraceProcess traces each processed record and commit") {
+  test("consumeChunkTraced(chunk) can disable delivery and commit spans") {
+    KafkaTracerTestkit
+      .create()
+      .use { testkit =>
+        val config =
+          KafkaTracer.Config.default.withoutReceiveSpans.withoutCommitSpans
+
+        for {
+          processed <- Ref[IO].of(Option.empty[Chunk[ConsumerRecord[String, String]]])
+          commits <- Ref[IO].of(0)
+          record = ConsumerRecord("topic", 0, 1L, "k", "v")
+          consumer = StubKafkaConsumer.streaming(
+            List(committableRecord(record, commits)),
+            clientId = "consumer-client",
+            groupId = "consumer-group"
+          )
+          traced <- testkit.tracedConsumer[String, String](consumer, config)
+          _ <- traced.consumeChunkTraced { chunk =>
+            processed.set(Some(chunk)).as(CommitNow)
+          }.attempt
+          seen <- processed.get
+          commitCount <- commits.get
+          spans <- testkit.finishedSpans
+          _ <- IO {
+            assertEquals(seen, Some(Chunk.singleton(record)))
+            assertEquals(commitCount, 1)
+            assertExpected(
+              spans,
+              TraceForestExpectation.unordered(
+                root(
+                  SpanExpectation
+                    .consumer("process topic")
+                    .scopeName("fs2.kafka")
+                    .attributesSubset(
+                      MessagingExperimentalAttributes.MessagingSystem(
+                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      ),
+                      MessagingExperimentalAttributes.MessagingDestinationName("topic"),
+                      MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
+                      MessagingExperimentalAttributes.MessagingOperationName("process"),
+                      MessagingExperimentalAttributes.MessagingOperationType("process"),
+                      MessagingExperimentalAttributes.MessagingClientId("consumer-client"),
+                      MessagingExperimentalAttributes.MessagingConsumerGroupName("consumer-group")
+                    )
+                )
+              )
+            )
+          }
+        } yield ()
+      }
+  }
+
+  test("consumeRecordTraced traces delivery, each processed record, and commit") {
     KafkaTracerTestkit
       .create()
       .use { testkit =>
@@ -139,7 +200,7 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
           )
           traced <- testkit.tracedConsumer[String, String](consumer)
           _ <- traced
-            .consumeChunkTraceProcess(record => processed.update(_ :+ record))
+            .consumeRecordTraced(record => processed.update(_ :+ record))
             .attempt
           seen <- processed.get
           commitCount <- commits.get
@@ -150,6 +211,15 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
             assertExpected(
               spans,
               TraceForestExpectation.unordered(
+                root(
+                  SpanExpectation
+                    .client("poll topic")
+                    .scopeName("fs2.kafka")
+                    .attributesSubset(
+                      MessagingExperimentalAttributes.MessagingOperationName("poll"),
+                      MessagingExperimentalAttributes.MessagingOperationType("receive")
+                    )
+                ),
                 root(
                   SpanExpectation
                     .consumer("process topic")
@@ -230,13 +300,16 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
             List(committableRecord(record, commits))
           )
           traced <- testkit.tracedConsumer[String, String](consumer, config)
-          _ <- traced.consumeChunkTraceReceive(_ => IO.pure(CommitNow)).attempt
+          _ <- traced
+            .consumeChunkTraced(_ => IO.pure(CommitNow))
+            .attempt
           spans <- testkit.finishedSpans
           _ <- IO {
             assertExpected(
               spans,
               TraceForestExpectation.unordered(
                 root(SpanExpectation.client("poll topic").scopeName("fs2.kafka")),
+                root(SpanExpectation.consumer("process topic").scopeName("fs2.kafka")),
                 root(
                   SpanExpectation
                     .client("finish topic 1")
@@ -375,7 +448,9 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
           record = ConsumerRecord("topic", 0, 1L, "key", "value")
           consumer = StubKafkaConsumer.streaming(List(committableRecord(record, commits)))
           traced <- testkit.tracedConsumer[String, String](consumer, config)
-          _ <- traced.consumeChunkTraceProcess(record => processed.update(_ :+ record)).attempt
+          _ <- traced
+            .consumeRecordTraced(record => processed.update(_ :+ record))
+            .attempt
           seen <- processed.get
           commitCount <- commits.get
           spans <- testkit.finishedSpans
