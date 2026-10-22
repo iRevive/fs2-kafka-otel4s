@@ -42,6 +42,7 @@ trait ConsumerTracingSyntax {
       * tracedConsumer.receive(records)(fa)
       * }}}
       */
+    @deprecated("Select a ConsumerSpans handle and call spans.receive(records)(fa)", "0.3")
     def receiveTraced[F[_], A](fa: F[A])(implicit
         tracedConsumer: TracedKafkaConsumer[F, K, V]
     ): F[A] =
@@ -65,6 +66,7 @@ trait ConsumerTracingSyntax {
       * tracedConsumer.receiveCommittable(records)(fa)
       * }}}
       */
+    @deprecated("Select a ConsumerSpans handle and call spans.receiveCommittable(records)(fa)", "0.3")
     def receiveTraced[A](fa: F[A])(implicit
         tracedConsumer: TracedKafkaConsumer[F, K, V]
     ): F[A] =
@@ -84,6 +86,7 @@ trait ConsumerTracingSyntax {
       * tracedConsumer.process(record)(fa)
       * }}}
       */
+    @deprecated("Select a ConsumerSpans handle and call spans.process(record)(fa)", "0.3")
     def processTraced[F[_], A](fa: F[A])(implicit
         tracedConsumer: TracedKafkaConsumer[F, K, V]
     ): F[A] =
@@ -106,6 +109,7 @@ trait ConsumerTracingSyntax {
       * tracedConsumer.process(record)(fa)
       * }}}
       */
+    @deprecated("Select a ConsumerSpans handle and call spans.process(record)(fa)", "0.3")
     def processTraced[A](fa: F[A])(implicit
         tracedConsumer: TracedKafkaConsumer[F, K, V]
     ): F[A] =
@@ -184,6 +188,7 @@ trait TracedKafkaConsumerStreamTracingSyntax {
       * tracedConsumers.evalMap(_.consumeChunk(chunkProcessor)).compile.onlyOrError
       * }}}
       */
+    @deprecated("Use tracedConsumer.underlying.consumeChunk", "0.3")
     def consumeChunk(
         chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
     )(implicit F: Concurrent[F], P: Parallel[F]): F[Nothing] =

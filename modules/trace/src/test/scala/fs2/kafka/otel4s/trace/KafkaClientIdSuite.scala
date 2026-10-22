@@ -78,6 +78,40 @@ final class KafkaClientIdSuite extends CatsEffectSuite {
     }
   }
 
+  test("missing client id in metrics is cached") {
+    for {
+      metricCalls <- Ref[IO].of(0)
+      clientId = KafkaClientId[IO](None, metricCalls.update(_ + 1).as(Map.empty[MetricName, Metric]))
+      first <- clientId.get
+      second <- clientId.get
+      calls <- metricCalls.get
+    } yield {
+      assertEquals(first, None)
+      assertEquals(second, None)
+      assertEquals(calls, 1)
+    }
+  }
+
+  test("separate resolvers cache identity independently") {
+    for {
+      firstCalls <- Ref[IO].of(0)
+      secondCalls <- Ref[IO].of(0)
+      first = KafkaClientId[IO](None, firstCalls.update(_ + 1).as(clientMetrics("first-client")))
+      second = KafkaClientId[IO](None, secondCalls.update(_ + 1).as(clientMetrics("second-client")))
+      firstId <- first.get
+      firstCached <- first.get
+      secondId <- second.get
+      firstCount <- firstCalls.get
+      secondCount <- secondCalls.get
+    } yield {
+      assertEquals(firstId, Some("first-client"))
+      assertEquals(firstCached, firstId)
+      assertEquals(secondId, Some("second-client"))
+      assertEquals(firstCount, 1)
+      assertEquals(secondCount, 1)
+    }
+  }
+
   private def clientMetrics(clientId: String): Map[MetricName, Metric] =
     Map(
       new MetricName(

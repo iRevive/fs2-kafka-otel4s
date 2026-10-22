@@ -76,6 +76,9 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
             consumer: KafkaConsumer[IO, K, V]
         ): TracedKafkaConsumer[IO, K, V] =
           expected.asInstanceOf[TracedKafkaConsumer[IO, K, V]]
+
+        override def consumerSpans(metadata: ConsumerMetadata): ConsumerSpans[IO] =
+          throw new AssertionError("unexpected consumer spans")
       }
       result <- Stream
         .emit(underlying)
@@ -168,6 +171,8 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
       val recordsTracedCalled: Ref[IO, Boolean],
       recordsTracedResult: Stream[IO, CommittableConsumerRecord[IO, String, String]] = Stream.empty
   ) extends TracedKafkaConsumer[IO, String, String] {
+
+    override val spans: ConsumerSpans[IO] = KafkaTracer.noop[IO].consumerSpans(ConsumerMetadata(None, None))
 
     override def consumeChunkTraced(
         processor: Chunk[ConsumerRecord[String, String]] => IO[CommitNow]

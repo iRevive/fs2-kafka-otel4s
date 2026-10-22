@@ -1,0 +1,232 @@
+/*
+ * Copyright 2026 Typelevel
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package fs2.kafka.otel4s.trace
+
+import cats.effect.{Deferred, IO, Ref}
+import fs2.Chunk
+import fs2.kafka._
+import io.opentelemetry.api.common.AttributeKey
+import org.typelevel.otel4s.oteljava.testkit.trace.{SpanExpectation, TraceForestExpectation}
+import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
+import org.typelevel.otel4s.Attributes
+import org.typelevel.otel4s.oteljava.testkit.trace.{
+  LinkExpectation,
+  LinkSetExpectation,
+  SpanContextExpectation,
+  TraceExpectation
+}
+import org.typelevel.otel4s.trace.Tracer
+
+final class ConsumerSpansSuite extends KafkaTracingTestSupport {
+
+  test("explicit and consumer-bound spans preserve policy, precedence, and extracted links") {
+    KafkaTracerTestkit.create().use { testkit =>
+      implicit val tracerProvider: org.typelevel.otel4s.trace.TracerProvider[IO] = testkit.tracerProvider
+      import testkit.appTracer
+
+      val metadata = ConsumerMetadata(Some("orders-client"), Some("orders-group"))
+      val consumer = StubKafkaConsumer.metadataOnly[String, String]("orders-client", "orders-group")
+      val config =
+        KafkaTracer.Config.default
+          .withConstAttributes(Attributes(MessagingExperimentalAttributes.MessagingClientId("constant-client")))
+          .withProcessSpanSetup { context =>
+            Some(
+              KafkaTracer.Config.SpanSetup.Process(
+                s"custom-process ${context.topic}",
+                Attributes(
+                  MessagingExperimentalAttributes.MessagingClientId("setup-client"),
+                  MessagingExperimentalAttributes.MessagingOperationName("custom-process")
+                ),
+                KafkaTracer.Config.Defaults.spanFinalizationStrategy
+              )
+            )
+          }
+
+      for {
+        producer <- testkit.tracedProducer[String, String](StubKafkaProducer.metadataOnly("producer-client"))
+        produced <- appTracer.rootSpan("producer-root").surround {
+          for {
+            span <- Tracer[IO].currentSpanOrThrow
+            record <- producer.injectHeaders(ProducerRecord("orders", "order-1", "payload"))
+          } yield (span.context, record)
+        }
+        (producerContext, propagated) = produced
+        record = ConsumerRecord("orders", 2, 17L, "order-1", "payload").withHeaders(propagated.headers)
+        committable = StubKafkaConsumer.committableRecord(record)
+        tracer <- KafkaTracer.create[IO](config)
+        boundConsumer = tracer.consumer(consumer)
+        bound = boundConsumer.spans
+        explicit = tracer.consumerSpans(metadata)
+        _ <- bound.receive(Chunk.singleton(record))(IO.unit)
+        _ <- explicit.receive(Chunk.singleton(record))(IO.unit)
+        _ <- bound.receiveCommittable(Chunk.singleton(committable))(IO.unit)
+        _ <- explicit.receiveCommittable(Chunk.singleton(committable))(IO.unit)
+        _ <- bound.process(record)(IO.unit)
+        _ <- explicit.process(record)(IO.unit)
+        _ <- bound.process(committable)(IO.unit)
+        _ <- explicit.process(committable)(IO.unit)
+        spans <- testkit.finishedSpans
+        _ <- IO {
+          val expectedProcess = TraceExpectation.leaf(
+            SpanExpectation
+              .consumer("custom-process orders")
+              .attributesSubset(
+                MessagingExperimentalAttributes.MessagingClientId("setup-client"),
+                MessagingExperimentalAttributes.MessagingConsumerGroupName("orders-group"),
+                MessagingExperimentalAttributes.MessagingOperationName("custom-process")
+              )
+              .noParentSpanContext
+              .links(
+                LinkSetExpectation.exactly(
+                  LinkExpectation.any.spanContext(
+                    SpanContextExpectation.any
+                      .traceIdHex(producerContext.traceIdHex)
+                      .spanIdHex(producerContext.spanIdHex)
+                  )
+                )
+              )
+          )
+          val expectedReceive = TraceExpectation.leaf(
+            SpanExpectation
+              .client("poll orders")
+              .attributesSubset(
+                MessagingExperimentalAttributes.MessagingClientId("constant-client"),
+                MessagingExperimentalAttributes.MessagingConsumerGroupName("orders-group")
+              )
+              .noParentSpanContext
+              .links(
+                LinkSetExpectation.exactly(
+                  LinkExpectation.any.spanContext(
+                    SpanContextExpectation.any
+                      .traceIdHex(producerContext.traceIdHex)
+                      .spanIdHex(producerContext.spanIdHex)
+                  )
+                )
+              )
+          )
+          assertExpected(
+            spans,
+            TraceForestExpectation.unordered(
+              root(SpanExpectation.internal("producer-root").scopeName("fs2.kafka.otel4s.tests")),
+              expectedProcess,
+              expectedProcess,
+              expectedProcess,
+              expectedProcess,
+              expectedReceive,
+              expectedReceive,
+              expectedReceive,
+              expectedReceive
+            )
+          )
+        }
+      } yield ()
+    }
+  }
+
+  test("one explicit handle accepts records with different key types and two handles select metadata explicitly") {
+    KafkaTracerTestkit.create().use { testkit =>
+      implicit val tracerProvider: org.typelevel.otel4s.trace.TracerProvider[IO] = testkit.tracerProvider
+      for {
+        tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
+        first = tracer.consumerSpans(ConsumerMetadata(Some("first-client"), Some("group-a")))
+        second = tracer.consumerSpans(ConsumerMetadata(Some("second-client"), Some("group-b")))
+        _ <- first.process(ConsumerRecord("topic", 0, 1L, "key", "raw"))(IO.unit)
+        _ <- first.process(ConsumerRecord("topic", 0, 2L, 1, "decoded"))(IO.unit)
+        _ <- second.process(ConsumerRecord("topic", 0, 1L, "key", "other"))(IO.unit)
+        spans <- testkit.finishedSpans
+        clientIds = spans.map(_.getAttributes.get(AttributeKey.stringKey("messaging.client.id"))).sorted
+        _ <- IO(assertEquals(clientIds, List("first-client", "first-client", "second-client")))
+      } yield ()
+    }
+  }
+
+  test("the four explicit process and receive overloads create the configured spans") {
+    KafkaTracerTestkit.create().use { testkit =>
+      implicit val tracerProvider: org.typelevel.otel4s.trace.TracerProvider[IO] = testkit.tracerProvider
+      val record = ConsumerRecord("topic", 0, 1L, "key", "value")
+      val committable = StubKafkaConsumer.committableRecord(record)
+
+      for {
+        tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
+        spans = tracer.consumerSpans(ConsumerMetadata(Some("client"), Some("group")))
+        _ <- spans.receive(Chunk.singleton(record))(IO.unit)
+        _ <- spans.receiveCommittable(Chunk.singleton(committable))(IO.unit)
+        _ <- spans.process(record)(IO.unit)
+        _ <- spans.process(committable)(IO.unit)
+        finished <- testkit.finishedSpans
+      } yield assertEquals(
+        finished.map(_.getName).sorted,
+        List("poll topic", "poll topic", "process topic", "process topic")
+      )
+    }
+  }
+
+  test("suppressed, empty, and noop receive/process calls still evaluate the supplied effect") {
+    KafkaTracerTestkit.create().use { testkit =>
+      implicit val tracerProvider: org.typelevel.otel4s.trace.TracerProvider[IO] = testkit.tracerProvider
+      val record = ConsumerRecord("topic", 0, 1L, "key", "value")
+      for {
+        calls <- Ref[IO].of(0)
+        tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default.withoutProcessSpans)
+        disabled = tracer.consumerSpans(ConsumerMetadata(None, None))
+        receiveTracer <- KafkaTracer.create[IO](KafkaTracer.Config.default.withoutReceiveSpans)
+        receiveDisabled = receiveTracer.consumerSpans(ConsumerMetadata(None, None))
+        noop = KafkaTracer.noop[IO].consumerSpans(ConsumerMetadata(None, None))
+        disabledResult <- disabled.process(record)(calls.update(_ + 1).as(42))
+        disabledReceive <- receiveDisabled.receive(Chunk.singleton(record))(calls.update(_ + 1).as(44))
+        emptyReceive <- disabled.receive(Chunk.empty[ConsumerRecord[String, String]])(calls.update(_ + 1).as(46))
+        noopResult <- noop.process(record)(calls.update(_ + 1).as(43))
+        noopReceive <- noop.receive(Chunk.singleton(record))(calls.update(_ + 1).as(45))
+        count <- calls.get
+        spans <- testkit.finishedSpans
+      } yield {
+        assertEquals(disabledResult, 42)
+        assertEquals(disabledReceive, 44)
+        assertEquals(emptyReceive, 46)
+        assertEquals(noopResult, 43)
+        assertEquals(noopReceive, 45)
+        assertEquals(count, 5)
+        assertEquals(spans, Nil)
+      }
+    }
+  }
+
+  test("explicit process spans finalize on failure and cancellation") {
+    KafkaTracerTestkit.create().use { testkit =>
+      implicit val tracerProvider: org.typelevel.otel4s.trace.TracerProvider[IO] = testkit.tracerProvider
+      val failure = new RuntimeException("process failed")
+      val record = ConsumerRecord("topic", 0, 1L, "key", "value")
+
+      for {
+        tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
+        spans = tracer.consumerSpans(ConsumerMetadata(None, None))
+        error <- spans.process(record)(IO.raiseError[Unit](failure)).attempt
+        started <- Deferred[IO, Unit]
+        gate <- Deferred[IO, Unit]
+        fiber <- spans.process(record)(started.complete(()) *> gate.get).start
+        _ <- started.get
+        _ <- fiber.cancel
+        finished <- testkit.finishedSpans
+      } yield {
+        assertEquals(error, Left(failure))
+        assertEquals(finished.size, 2)
+        assertEquals(finished.map(_.getName), List("process topic", "process topic"))
+      }
+    }
+  }
+
+}
