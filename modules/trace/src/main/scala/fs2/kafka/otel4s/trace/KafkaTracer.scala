@@ -73,10 +73,10 @@ object KafkaTracer {
     private[otel4s] def tracerName: String
     private[otel4s] def constAttributes: Attributes
     private[otel4s] def batchSpanMode: BatchSpanMode
-    private[otel4s] def sendSpanSetup: SendSpanContext => Config.SpanSetup
-    private[otel4s] def receiveSpanSetup: ReceiveSpanContext => Config.SpanSetup
-    private[otel4s] def processSpanSetup: ProcessSpanContext => Config.SpanSetup
-    private[otel4s] def commitSpanSetup: CommitSpanContext => Config.SpanSetup
+    private[otel4s] def sendSpanSetup: SendSpanContext => Option[Config.SpanSetup.Send]
+    private[otel4s] def receiveSpanSetup: ReceiveSpanContext => Option[Config.SpanSetup.Receive]
+    private[otel4s] def processSpanSetup: ProcessSpanContext => Option[Config.SpanSetup.Process]
+    private[otel4s] def commitSpanSetup: CommitSpanContext => Option[Config.SpanSetup.Commit]
 
     /** Replaces the constant attributes attached to every span emitted by this library.
       *
@@ -104,21 +104,49 @@ object KafkaTracer {
       *
       * This function controls the send span's name, extra attributes, and finalization strategy. It does not control
       * whether the send span is `PRODUCER` or `CLIENT`, which contexts are linked, or whether per-record `create` spans
-      * are generated.
+      * are generated. Return `None` to suppress the send span.
       */
-    def withSendSpanSetup(f: SendSpanContext => Config.SpanSetup): Config
+    def withSendSpanSetup(f: SendSpanContext => Option[Config.SpanSetup.Send]): Config
 
     /** Replaces the function used to derive consumer-side `poll` / `receive` span setup from chunk metadata.
+      *
+      * Return `None` to suppress the receive span.
       */
-    def withReceiveSpanSetup(f: ReceiveSpanContext => Config.SpanSetup): Config
+    def withReceiveSpanSetup(f: ReceiveSpanContext => Option[Config.SpanSetup.Receive]): Config
 
     /** Replaces the function used to derive consumer-side `process` span setup from record metadata.
+      *
+      * Return `None` to suppress the process span.
       */
-    def withProcessSpanSetup(f: ProcessSpanContext => Config.SpanSetup): Config
+    def withProcessSpanSetup(f: ProcessSpanContext => Option[Config.SpanSetup.Process]): Config
 
     /** Replaces the function used to derive consumer-side `commit` / `settle` span setup from committed chunk metadata.
+      *
+      * Return `None` to suppress the commit span.
       */
-    def withCommitSpanSetup(f: CommitSpanContext => Config.SpanSetup): Config
+    def withCommitSpanSetup(f: CommitSpanContext => Option[Config.SpanSetup.Commit]): Config
+
+    /** Suppresses all producer-side `send` spans.
+      *
+      * Header propagation and `create` spans selected by [[BatchSpanMode]] remain enabled.
+      */
+    final def withoutSendSpans: Config =
+      withSendSpanSetup(_ => None)
+
+    /** Suppresses all consumer-side `poll` / `receive` spans.
+      */
+    final def withoutReceiveSpans: Config =
+      withReceiveSpanSetup(_ => None)
+
+    /** Suppresses all consumer-side `process` spans.
+      */
+    final def withoutProcessSpans: Config =
+      withProcessSpanSetup(_ => None)
+
+    /** Suppresses all consumer-side `commit` / `settle` spans.
+      */
+    final def withoutCommitSpans: Config =
+      withCommitSpanSetup(_ => None)
 
     /** Adds `server.address` and, when provided, `server.port` to emitted spans.
       *
@@ -140,17 +168,17 @@ object KafkaTracer {
 
       val tracerName: String = "fs2.kafka"
 
-      val sendSpanSetup: SendSpanContext => SpanSetup =
-        ctx => SpanSetup("send", Option.when(ctx.topics.size == 1)(ctx.topics.head))
+      val sendSpanSetup: SendSpanContext => Option[SpanSetup.Send] =
+        ctx => Some(SpanSetup.Send("send", Option.when(ctx.topics.size == 1)(ctx.topics.head)))
 
-      val receiveSpanSetup: ReceiveSpanContext => SpanSetup =
-        ctx => SpanSetup("poll", Option.when(ctx.topics.size == 1)(ctx.topics.head))
+      val receiveSpanSetup: ReceiveSpanContext => Option[SpanSetup.Receive] =
+        ctx => Some(SpanSetup.Receive("poll", Option.when(ctx.topics.size == 1)(ctx.topics.head)))
 
-      val processSpanSetup: ProcessSpanContext => SpanSetup =
-        ctx => SpanSetup("process", Some(ctx.topic))
+      val processSpanSetup: ProcessSpanContext => Option[SpanSetup.Process] =
+        ctx => Some(SpanSetup.Process("process", Some(ctx.topic)))
 
-      val commitSpanSetup: CommitSpanContext => SpanSetup =
-        ctx => SpanSetup("commit", Option.when(ctx.topics.size == 1)(ctx.topics.head))
+      val commitSpanSetup: CommitSpanContext => Option[SpanSetup.Commit] =
+        ctx => Some(SpanSetup.Commit("commit", Option.when(ctx.topics.size == 1)(ctx.topics.head)))
 
       val spanFinalizationStrategy: SpanFinalizer.Strategy = {
         case Resource.ExitCase.Errored(e) =>
@@ -192,25 +220,84 @@ object KafkaTracer {
 
     object SpanSetup {
 
-      def apply(
+      sealed trait Send extends SpanSetup
+      object Send {
+        def apply(
+            spanName: String,
+            attributes: Attributes,
+            finalizationStrategy: SpanFinalizer.Strategy
+        ): Send =
+          SendImpl(spanName, attributes, finalizationStrategy)
+
+        private[KafkaTracer] def apply(operation: String, topic: Option[String]): Send =
+          SendImpl(operationSpanName(operation, topic), Attributes.empty, Defaults.spanFinalizationStrategy)
+      }
+
+      sealed trait Receive extends SpanSetup
+      object Receive {
+        def apply(
+            spanName: String,
+            attributes: Attributes,
+            finalizationStrategy: SpanFinalizer.Strategy
+        ): Receive =
+          ReceiveImpl(spanName, attributes, finalizationStrategy)
+
+        private[KafkaTracer] def apply(operation: String, topic: Option[String]): Receive =
+          ReceiveImpl(operationSpanName(operation, topic), Attributes.empty, Defaults.spanFinalizationStrategy)
+      }
+
+      sealed trait Process extends SpanSetup
+      object Process {
+        def apply(
+            spanName: String,
+            attributes: Attributes,
+            finalizationStrategy: SpanFinalizer.Strategy
+        ): Process =
+          ProcessImpl(spanName, attributes, finalizationStrategy)
+
+        private[KafkaTracer] def apply(operation: String, topic: Option[String]): Process =
+          ProcessImpl(operationSpanName(operation, topic), Attributes.empty, Defaults.spanFinalizationStrategy)
+      }
+
+      sealed trait Commit extends SpanSetup
+      object Commit {
+        def apply(
+            spanName: String,
+            attributes: Attributes,
+            finalizationStrategy: SpanFinalizer.Strategy
+        ): Commit =
+          CommitImpl(spanName, attributes, finalizationStrategy)
+
+        private[KafkaTracer] def apply(operation: String, topic: Option[String]): Commit =
+          CommitImpl(operationSpanName(operation, topic), Attributes.empty, Defaults.spanFinalizationStrategy)
+      }
+
+      private def operationSpanName(operation: String, topic: Option[String]): String =
+        topic.fold(operation)(value => s"$operation $value")
+
+      final private case class SendImpl(
           spanName: String,
           attributes: Attributes,
           finalizationStrategy: SpanFinalizer.Strategy
-      ): SpanSetup =
-        SpanSetupImpl(spanName, attributes, finalizationStrategy)
+      ) extends Send
 
-      private[KafkaTracer] def apply(operation: String, topic: Option[String]): SpanSetup =
-        SpanSetup(
-          spanName = topic.fold(operation)(value => s"$operation $value"),
-          attributes = Attributes.empty,
-          finalizationStrategy = Defaults.spanFinalizationStrategy
-        )
-
-      final private case class SpanSetupImpl(
+      final private case class ReceiveImpl(
           spanName: String,
           attributes: Attributes,
           finalizationStrategy: SpanFinalizer.Strategy
-      ) extends SpanSetup
+      ) extends Receive
+
+      final private case class ProcessImpl(
+          spanName: String,
+          attributes: Attributes,
+          finalizationStrategy: SpanFinalizer.Strategy
+      ) extends Process
+
+      final private case class CommitImpl(
+          spanName: String,
+          attributes: Attributes,
+          finalizationStrategy: SpanFinalizer.Strategy
+      ) extends Commit
 
     }
 
@@ -229,10 +316,10 @@ object KafkaTracer {
         tracerName: String,
         constAttributes: Attributes,
         batchSpanMode: BatchSpanMode,
-        sendSpanSetup: SendSpanContext => Config.SpanSetup,
-        receiveSpanSetup: ReceiveSpanContext => Config.SpanSetup,
-        processSpanSetup: ProcessSpanContext => Config.SpanSetup,
-        commitSpanSetup: CommitSpanContext => Config.SpanSetup,
+        sendSpanSetup: SendSpanContext => Option[Config.SpanSetup.Send],
+        receiveSpanSetup: ReceiveSpanContext => Option[Config.SpanSetup.Receive],
+        processSpanSetup: ProcessSpanContext => Option[Config.SpanSetup.Process],
+        commitSpanSetup: CommitSpanContext => Option[Config.SpanSetup.Commit],
     ) extends Config {
 
       override def withConstAttributes(attributes: Attributes): Config =
@@ -244,16 +331,16 @@ object KafkaTracer {
       override def withBatchSpanMode(mode: BatchSpanMode): Config =
         copy(batchSpanMode = mode)
 
-      override def withSendSpanSetup(f: SendSpanContext => Config.SpanSetup): Config =
+      override def withSendSpanSetup(f: SendSpanContext => Option[Config.SpanSetup.Send]): Config =
         copy(sendSpanSetup = f)
 
-      override def withReceiveSpanSetup(f: ReceiveSpanContext => Config.SpanSetup): Config =
+      override def withReceiveSpanSetup(f: ReceiveSpanContext => Option[Config.SpanSetup.Receive]): Config =
         copy(receiveSpanSetup = f)
 
-      override def withProcessSpanSetup(f: ProcessSpanContext => Config.SpanSetup): Config =
+      override def withProcessSpanSetup(f: ProcessSpanContext => Option[Config.SpanSetup.Process]): Config =
         copy(processSpanSetup = f)
 
-      override def withCommitSpanSetup(f: CommitSpanContext => Config.SpanSetup): Config =
+      override def withCommitSpanSetup(f: CommitSpanContext => Option[Config.SpanSetup.Commit]): Config =
         copy(commitSpanSetup = f)
 
       override def withServerAddress(serverAddress: String, serverPort: Option[Int]): Config =

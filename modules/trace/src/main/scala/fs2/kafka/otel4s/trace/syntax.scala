@@ -175,9 +175,8 @@ trait TracedKafkaConsumerStreamTracingSyntax {
     /** Consumes from all assigned partitions concurrently through [[TracedKafkaConsumer.consumeChunk]].
       *
       * This helper keeps raw `consumeChunk` available on `Stream[TracedKafkaConsumer[...]]`. It delegates to
-      * [[TracedKafkaConsumer.consumeChunk]], so it does not add tracing by itself. Use [[consumeChunkTraceReceive]]
-      * when you want chunk-level `receive` spans, or [[consumeChunkTraceProcess]] when you want per-record `process`
-      * spans around record handling.
+      * [[TracedKafkaConsumer.consumeChunk]], so it does not add tracing by itself. Use [[consumeChunkTraced]] or
+      * [[consumeRecordTraced]] when you want `receive`, per-record `process`, and owned `commit` tracing.
       *
       * Is shorthand for:
       *
@@ -190,37 +189,33 @@ trait TracedKafkaConsumerStreamTracingSyntax {
     )(implicit F: Concurrent[F], P: Parallel[F]): F[Nothing] =
       self.evalMap(_.consumeChunk(chunkProcessor)).compile.onlyOrError
 
-    /** Consumes from all assigned partitions concurrently, tracing delivery of each emitted chunk to the supplied
-      * callback.
-      *
-      * This helper models chunk delivery with `receive` spans. If you want per-record `process` spans, use
-      * [[consumeChunkTraceProcess]], [[recordsWithProcessTraced]], or wrap explicit record handling with
-      * `processTraced`.
+    /** Consumes from all assigned partitions concurrently, tracing each emitted chunk with `receive`, per-record
+      * `process`, and owned `commit` spans.
       *
       * Is shorthand for:
       *
       * {{{
-      * tracedConsumers.evalMap(_.consumeChunkTraceReceive(chunkProcessor)).compile.onlyOrError
+      * tracedConsumers.evalMap(_.consumeChunkTraced(chunkProcessor)).compile.onlyOrError
       * }}}
       */
-    def consumeChunkTraceReceive(
+    def consumeChunkTraced(
         chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
     )(implicit F: Concurrent[F]): F[Nothing] =
-      self.evalMap(_.consumeChunkTraceReceive(chunkProcessor)).compile.onlyOrError
+      self.evalMap(_.consumeChunkTraced(chunkProcessor)).compile.onlyOrError
 
-    /** Consumes from all assigned partitions concurrently, wrapping each record callback in a per-record `process`
-      * span.
+    /** Consumes from all assigned partitions concurrently, tracing each emitted chunk with `receive`, per-record
+      * `process`, and owned `commit` spans.
       *
       * Is shorthand for:
       *
       * {{{
-      * tracedConsumers.evalMap(_.consumeChunkTraceProcess(recordProcessor)).compile.onlyOrError
+      * tracedConsumers.evalMap(_.consumeRecordTraced(recordProcessor)).compile.onlyOrError
       * }}}
       */
-    def consumeChunkTraceProcess[A](
+    def consumeRecordTraced[A](
         recordProcessor: ConsumerRecord[K, V] => F[A]
     )(implicit F: Concurrent[F]): F[Nothing] =
-      self.evalMap(_.consumeChunkTraceProcess(recordProcessor)).compile.onlyOrError
+      self.evalMap(_.consumeRecordTraced(recordProcessor)).compile.onlyOrError
 
     /** Convenience stream for the common traced-consumption shape: a chunk-level `receive` span around delivery, plus a
       * per-record `process` span for each record in that chunk.
@@ -228,13 +223,13 @@ trait TracedKafkaConsumerStreamTracingSyntax {
       * Is shorthand for:
       *
       * {{{
-      * tracedConsumers.flatMap(_.recordsWithProcess(f))
+      * tracedConsumers.flatMap(_.recordsTraced(f))
       * }}}
       */
-    def recordsWithProcessTraced[A](
+    def recordsTraced[A](
         f: CommittableConsumerRecord[F, K, V] => F[A]
     ): Stream[F, A] =
-      self.flatMap(_.recordsWithProcess(f))
+      self.flatMap(_.recordsTraced(f))
 
   }
 

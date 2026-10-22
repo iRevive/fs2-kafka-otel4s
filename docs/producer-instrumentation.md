@@ -264,7 +264,11 @@ With the default send-span finalization strategy:
 - the status description contains the exception message when one is available;
 - cancellation sets `error.type = "canceled"` and error status with description `canceled`.
 
-`withSendSpanSetup` can replace the send span's name, additional attributes, and finalization strategy. It does not change the span kind, link selection, or create spans.
+`withSendSpanSetup` can replace the send span's name, additional attributes, and finalization strategy. 
+Returning `None` suppresses the send span for that batch. It does not change the span kind, link selection, or create spans.
+
+When the send span is suppressed, producing the records and any configured create-span preparation still proceed. 
+Records without an existing propagated context can inherit the ambient context, but there is no send-span context to inject.
 
 If propagation fails while preparing a batch, all create spans allocated before the failure are released. The send span is not created because batch preparation did not complete. `SharedSendSpan` has no create spans to release.
 
