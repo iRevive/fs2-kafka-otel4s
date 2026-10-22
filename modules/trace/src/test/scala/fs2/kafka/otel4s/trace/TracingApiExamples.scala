@@ -57,7 +57,9 @@ private[trace] object TracingApiExamples {
 
   // Deliberately has no trace.syntax import: low-level operations are ordinary methods on the selected handle.
   def lowLevel(record: ConsumerRecord[String, String], tracer: KafkaTracer[IO]): IO[Unit] = {
-    val spans = tracer.consumerSpans(ConsumerMetadata(Some("orders-client"), Some("orders-group")))
+    val spans = tracer.consumerSpans(
+      ConsumerMetadata.Provider.constant[IO](ConsumerMetadata(Some("orders-client"), Some("orders-group")))
+    )
     spans.process(record)(IO.unit)
   }
 

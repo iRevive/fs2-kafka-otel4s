@@ -70,7 +70,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
         tracer <- KafkaTracer.create[IO](config)
         boundConsumer = tracer.consumer(consumer)
         bound = boundConsumer.spans
-        explicit = tracer.consumerSpans(metadata)
+        explicit = tracer.consumerSpans(provider(metadata))
         _ <- bound.receive(Chunk.singleton(record))(IO.unit)
         _ <- explicit.receive(Chunk.singleton(record))(IO.unit)
         _ <- bound.receiveCommittable(Chunk.singleton(committable))(IO.unit)
@@ -142,8 +142,8 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
       implicit val tracerProvider: org.typelevel.otel4s.trace.TracerProvider[IO] = testkit.tracerProvider
       for {
         tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
-        first = tracer.consumerSpans(ConsumerMetadata(Some("first-client"), Some("group-a")))
-        second = tracer.consumerSpans(ConsumerMetadata(Some("second-client"), Some("group-b")))
+        first = tracer.consumerSpans(provider(ConsumerMetadata(Some("first-client"), Some("group-a"))))
+        second = tracer.consumerSpans(provider(ConsumerMetadata(Some("second-client"), Some("group-b"))))
         _ <- first.process(ConsumerRecord("topic", 0, 1L, "key", "raw"))(IO.unit)
         _ <- first.process(ConsumerRecord("topic", 0, 2L, 1, "decoded"))(IO.unit)
         _ <- second.process(ConsumerRecord("topic", 0, 1L, "key", "other"))(IO.unit)
@@ -162,7 +162,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
 
       for {
         tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
-        spans = tracer.consumerSpans(ConsumerMetadata(Some("client"), Some("group")))
+        spans = tracer.consumerSpans(provider(ConsumerMetadata(Some("client"), Some("group"))))
         _ <- spans.receive(Chunk.singleton(record))(IO.unit)
         _ <- spans.receiveCommittable(Chunk.singleton(committable))(IO.unit)
         _ <- spans.process(record)(IO.unit)
@@ -175,6 +175,42 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
     }
   }
 
+  test("explicit consumer spans evaluate the supplied provider, while noop does not") {
+    KafkaTracerTestkit.create().use { testkit =>
+      implicit val tracerProvider: org.typelevel.otel4s.trace.TracerProvider[IO] = testkit.tracerProvider
+      val record = ConsumerRecord("topic", 0, 1L, "key", "value")
+      for {
+        gets <- Ref[IO].of(0)
+        tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
+        provider = new ConsumerMetadata.Provider[IO] {
+          override def get: IO[ConsumerMetadata] =
+            gets.update(_ + 1).as(ConsumerMetadata(Some("provided-client"), Some("provided-group")))
+        }
+        spans = tracer.consumerSpans(provider)
+        _ <- spans.process(record)(IO.unit)
+        result <- KafkaTracer
+          .noop[IO]
+          .consumerSpans(new ConsumerMetadata.Provider[IO] {
+            override def get: IO[ConsumerMetadata] = IO.raiseError(new AssertionError("noop evaluated metadata"))
+          })
+          .process(record)(IO.pure("ran"))
+        getCount <- gets.get
+        finished <- testkit.finishedSpans
+      } yield {
+        assertEquals(result, "ran")
+        assertEquals(getCount, 1)
+        assertEquals(
+          finished.map(_.getAttributes.get(AttributeKey.stringKey("messaging.client.id"))),
+          List("provided-client")
+        )
+        assertEquals(
+          finished.head.getAttributes.get(AttributeKey.stringKey("messaging.consumer.group.name")),
+          "provided-group"
+        )
+      }
+    }
+  }
+
   test("suppressed, empty, and noop receive/process calls still evaluate the supplied effect") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: org.typelevel.otel4s.trace.TracerProvider[IO] = testkit.tracerProvider
@@ -182,10 +218,10 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
       for {
         calls <- Ref[IO].of(0)
         tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default.withoutProcessSpans)
-        disabled = tracer.consumerSpans(ConsumerMetadata(None, None))
+        disabled = tracer.consumerSpans(provider(ConsumerMetadata(None, None)))
         receiveTracer <- KafkaTracer.create[IO](KafkaTracer.Config.default.withoutReceiveSpans)
-        receiveDisabled = receiveTracer.consumerSpans(ConsumerMetadata(None, None))
-        noop = KafkaTracer.noop[IO].consumerSpans(ConsumerMetadata(None, None))
+        receiveDisabled = receiveTracer.consumerSpans(provider(ConsumerMetadata(None, None)))
+        noop = KafkaTracer.noop[IO].consumerSpans(provider(ConsumerMetadata(None, None)))
         disabledResult <- disabled.process(record)(calls.update(_ + 1).as(42))
         disabledReceive <- receiveDisabled.receive(Chunk.singleton(record))(calls.update(_ + 1).as(44))
         emptyReceive <- disabled.receive(Chunk.empty[ConsumerRecord[String, String]])(calls.update(_ + 1).as(46))
@@ -213,7 +249,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
 
       for {
         tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
-        spans = tracer.consumerSpans(ConsumerMetadata(None, None))
+        spans = tracer.consumerSpans(provider(ConsumerMetadata(None, None)))
         error <- spans.process(record)(IO.raiseError[Unit](failure)).attempt
         started <- Deferred[IO, Unit]
         gate <- Deferred[IO, Unit]
@@ -228,5 +264,8 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
       }
     }
   }
+
+  private def provider(metadata: ConsumerMetadata): ConsumerMetadata.Provider[IO] =
+    ConsumerMetadata.Provider.constant[IO](metadata)
 
 }

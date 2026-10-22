@@ -67,7 +67,7 @@ final class KafkaProducerSyntaxSuite extends KafkaTracingTestSupport {
           ): TracedKafkaConsumer[IO, K, V] =
             ???
 
-          override def consumerSpans(metadata: ConsumerMetadata): ConsumerSpans[IO] =
+          override def consumerSpans(metadata: ConsumerMetadata.Provider[IO]): ConsumerSpans[IO] =
             ???
         }
         result <- Stream

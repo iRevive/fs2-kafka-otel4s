@@ -58,8 +58,8 @@ trait KafkaTracer[F[_]] {
       consumer: KafkaConsumer[F, K, V]
   ): TracedKafkaConsumer[F, K, V]
 
-  /** Creates consumer tracing operations using an explicit, client-independent metadata snapshot. */
-  def consumerSpans(metadata: ConsumerMetadata): ConsumerSpans[F]
+  /** Creates consumer tracing operations using the supplied metadata provider. */
+  def consumerSpans(metadata: ConsumerMetadata.Provider[F]): ConsumerSpans[F]
 
 }
 
@@ -415,8 +415,8 @@ object KafkaTracer {
         config
       )
 
-    override def consumerSpans(metadata: ConsumerMetadata): ConsumerSpans[F] =
-      ConsumerSpans[F](ConsumerMetadata.Provider.constant(metadata), config)
+    override def consumerSpans(metadata: ConsumerMetadata.Provider[F]): ConsumerSpans[F] =
+      ConsumerSpans[F](metadata, config)
 
   }
 
@@ -432,7 +432,7 @@ object KafkaTracer {
     ): TracedKafkaConsumer[F, K, V] =
       TracedKafkaConsumer.noop(consumer)
 
-    override def consumerSpans(metadata: ConsumerMetadata): ConsumerSpans[F] =
+    override def consumerSpans(metadata: ConsumerMetadata.Provider[F]): ConsumerSpans[F] =
       ConsumerSpans.noop[F]
 
   }
