@@ -27,6 +27,7 @@ import org.typelevel.otel4s.trace.Tracer
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
 import org.apache.kafka.common.TopicPartition
 
+@annotation.nowarn("cat=deprecation")
 final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
 
   test("consumeChunk delegates to the underlying consumer without tracing") {

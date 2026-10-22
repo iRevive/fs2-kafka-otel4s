@@ -22,6 +22,7 @@ import fs2.kafka._
 import fs2.kafka.consumer.KafkaConsumeChunk.CommitNow
 import fs2.kafka.otel4s.trace.syntax._
 
+@annotation.nowarn("cat=deprecation")
 final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
 
   test("Chunk[ConsumerRecord].receiveTraced delegates to receive") {

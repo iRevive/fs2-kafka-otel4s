@@ -18,6 +18,7 @@ package fs2.kafka.otel4s.trace
 
 import fs2.kafka.ConsumerRecord
 
+@annotation.nowarn("cat=deprecation")
 final class KafkaConsumerBindingSuite extends KafkaTracingTestSupport {
 
   test("traced consumer records delegates to underlying.records") {
