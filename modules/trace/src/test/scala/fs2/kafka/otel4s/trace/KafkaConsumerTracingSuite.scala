@@ -27,6 +27,7 @@ import org.typelevel.otel4s.trace.Tracer
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
 import org.apache.kafka.common.TopicPartition
 
+@annotation.nowarn("cat=deprecation")
 final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
 
   test("consumeChunk delegates to the underlying consumer without tracing") {
@@ -340,8 +341,8 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
           _ <- Tracer[IO]
             .rootSpan("ambient-context")
             .surround {
-              consumerTracer.receive(Chunk.singleton(record))(IO.unit) >>
-                consumerTracer.process(record)(IO.unit)
+              consumerTracer.spans.receive(Chunk.singleton(record))(IO.unit) >>
+                consumerTracer.spans.process(record)(IO.unit)
             }
           spans <- testkit.finishedSpans
           _ <- IO {
@@ -393,7 +394,7 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
           consumerTracer <- testkit.tracedConsumer[String, String](
             StubKafkaConsumer.metadataOnly("consumer-client", "consumer-group")
           )
-          _ <- consumerTracer.process(consumed)(IO.unit)
+          _ <- consumerTracer.spans.process(consumed)(IO.unit)
           spans <- testkit.finishedSpans
           _ <- IO {
             assertExpected(
@@ -489,7 +490,7 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
             ConsumerRecord("topic", 0, 1L, "k1", "v1").withHeaders(record1.headers),
             ConsumerRecord("topic", 0, 2L, "k2", "v2").withHeaders(record2.headers)
           )
-          _ <- consumerTracer.receive(records)(IO.unit)
+          _ <- consumerTracer.spans.receive(records)(IO.unit)
           spans <- testkit.finishedSpans
           _ <- IO {
             assertExpected(

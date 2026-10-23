@@ -58,6 +58,9 @@ trait KafkaTracer[F[_]] {
       consumer: KafkaConsumer[F, K, V]
   ): TracedKafkaConsumer[F, K, V]
 
+  /** Creates consumer tracing operations using the supplied metadata provider. */
+  def consumerSpans(metadata: ConsumerMetadata.Provider[F]): ConsumerSpans[F]
+
 }
 
 object KafkaTracer {
@@ -65,8 +68,8 @@ object KafkaTracer {
   /** Configuration for [[KafkaTracer]].
     *
     * Constant attributes configured here are attached to every span emitted by the library. Kafka client metadata
-    * derived from `KafkaProducer` or `KafkaConsumer` is intentionally not configured here; it is captured by the traced
-    * producer or consumer bound from that client.
+    * derived from a bound `KafkaProducer` or `KafkaConsumer` is intentionally not configured here. Consumer operation
+    * handles can also receive an explicit [[ConsumerMetadata]] snapshot.
     */
   sealed trait Config {
 
@@ -80,15 +83,15 @@ object KafkaTracer {
 
     /** Replaces the constant attributes attached to every span emitted by this library.
       *
-      * When these attributes use the same keys as metadata derived from the bound producer or consumer, the configured
-      * values take precedence.
+      * When these attributes use the same keys as metadata derived from a bound client or supplied in an explicit
+      * consumer metadata snapshot, the configured values take precedence.
       */
     def withConstAttributes(attributes: Attributes): Config
 
     /** Appends constant attributes to every span emitted by this library.
       *
-      * When these attributes use the same keys as metadata derived from the bound producer or consumer, the configured
-      * values take precedence.
+      * When these attributes use the same keys as metadata derived from a bound client or supplied in an explicit
+      * consumer metadata snapshot, the configured values take precedence.
       */
     def addConstAttributes(head: Attribute[?], tail: Attribute[?]*): Config
 
@@ -412,6 +415,9 @@ object KafkaTracer {
         config
       )
 
+    override def consumerSpans(metadata: ConsumerMetadata.Provider[F]): ConsumerSpans[F] =
+      ConsumerSpans[F](metadata, config)
+
   }
 
   final private class Noop[F[_]: Concurrent: Parallel] extends KafkaTracer[F] {
@@ -425,6 +431,9 @@ object KafkaTracer {
         consumer: KafkaConsumer[F, K, V]
     ): TracedKafkaConsumer[F, K, V] =
       TracedKafkaConsumer.noop(consumer)
+
+    override def consumerSpans(metadata: ConsumerMetadata.Provider[F]): ConsumerSpans[F] =
+      ConsumerSpans.noop[F]
 
   }
 

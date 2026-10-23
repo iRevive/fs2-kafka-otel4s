@@ -58,7 +58,7 @@ final class KafkaTracerSuite extends KafkaTracingTestSupport {
     val consumer = TracedKafkaConsumer.noop(underlying)
     val record = fs2.kafka.ConsumerRecord("topic", 0, 0L, "key", "value")
 
-    consumer.process(record)(IO.pure("result")).map { result =>
+    consumer.spans.process(record)(IO.pure("result")).map { result =>
       assert(consumer.underlying eq underlying)
       assertEquals(result, "result")
     }

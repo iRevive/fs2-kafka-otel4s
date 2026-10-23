@@ -43,8 +43,8 @@ final class KafkaClientIdTracingSuite extends KafkaTracingTestSupport {
           .produce(ProducerRecords.one(ProducerRecord("topic-b", "key-b", "value-b")))
           .flatten
         record = ConsumerRecord("topic-c", 0, 1L, "key-c", "value-c")
-        _ <- tracedConsumer.receive(Chunk(record))(IO.unit)
-        _ <- tracedConsumer.process(record)(IO.unit)
+        _ <- tracedConsumer.spans.receive(Chunk(record))(IO.unit)
+        _ <- tracedConsumer.spans.process(record)(IO.unit)
         producerCalls <- producerMetricCalls.get
         consumerCalls <- consumerMetricCalls.get
         spans <- testkit.finishedSpans

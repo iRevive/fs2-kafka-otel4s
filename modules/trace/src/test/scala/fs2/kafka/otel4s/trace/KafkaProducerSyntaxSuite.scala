@@ -24,6 +24,33 @@ import org.typelevel.otel4s.trace.TracerProvider
 
 final class KafkaProducerSyntaxSuite extends KafkaTracingTestSupport {
 
+  test("KafkaProducer.traced binds tracing to a producer instance") {
+    KafkaTracerTestkit.create().use { testkit =>
+      val producer = StubKafkaProducer.metadataOnly[String, String]()
+      implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+
+      for {
+        tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
+        produced <- producer
+          .traced(tracer)
+          .produce(ProducerRecords.one(ProducerRecord("topic", "key", "value")))
+          .flatten
+      } yield assertEquals(produced.size, 1)
+    }
+  }
+
+  test("KafkaProducer.traced(config) creates a tracer and binds the producer instance") {
+    KafkaTracerTestkit.create().use { testkit =>
+      val producer = StubKafkaProducer.metadataOnly[String, String]()
+      implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+
+      producer
+        .traced(KafkaTracer.Config.default)
+        .flatMap(_.produce(ProducerRecords.one(ProducerRecord("topic", "key", "value"))).flatten)
+        .map(result => assertEquals(result.size, 1))
+    }
+  }
+
   test("Stream[KafkaProducer].traced binds tracing and yields traced producers") {
     KafkaTracerTestkit.create().use { testkit =>
       val underlying = StubKafkaProducer.metadataOnly[String, String]()
@@ -38,6 +65,9 @@ final class KafkaProducerSyntaxSuite extends KafkaTracingTestSupport {
           override def consumer[K: KafkaMessageKey, V](
               consumer: KafkaConsumer[IO, K, V]
           ): TracedKafkaConsumer[IO, K, V] =
+            ???
+
+          override def consumerSpans(metadata: ConsumerMetadata.Provider[IO]): ConsumerSpans[IO] =
             ???
         }
         result <- Stream
