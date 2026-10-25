@@ -20,6 +20,8 @@ package internal
 import fs2.Chunk
 import fs2.kafka._
 import org.apache.kafka.clients.producer.RecordMetadata
+import org.apache.kafka.clients.consumer.OffsetAndMetadata
+import org.apache.kafka.common.TopicPartition
 import org.typelevel.otel4s.{Attribute, AttributeKey, Attributes}
 
 /** Messaging span semantic conventions: [[https://opentelemetry.io/docs/specs/semconv/messaging/messaging-spans/]]
@@ -144,9 +146,24 @@ private[otel4s] object Semconv {
     CommitSpanContext(
       topics = records.iterator.map(_.topic).toSet,
       partitions = records.iterator.map(_.partition).toSet,
-      recordCount = records.size,
+      recordCount = Some(records.size),
       messageKey = consumerSingleRecordMessageKey(records),
       offset = consumerSingleRecordOffset(records),
+      clientId = clientId,
+      groupId = groupId
+    )
+
+  def offsetCommitSpanContext(
+      offsets: Map[TopicPartition, OffsetAndMetadata],
+      clientId: Option[String],
+      groupId: Option[String]
+  ): CommitSpanContext =
+    CommitSpanContext(
+      topics = offsets.keysIterator.map(_.topic).toSet,
+      partitions = offsets.keysIterator.map(_.partition).toSet,
+      recordCount = None,
+      messageKey = None,
+      offset = None,
       clientId = clientId,
       groupId = groupId
     )
@@ -216,6 +233,23 @@ private[otel4s] object Semconv {
     builder.result()
   }
 
+  def offsetCommitAttributes(ctx: CommitSpanContext, offsets: Map[TopicPartition, OffsetAndMetadata]): Attributes = {
+    val builder = baseBuilder(
+      operationName = "commit",
+      operationType = "settle",
+      topic = singleton(ctx.topics),
+      clientId = ctx.clientId,
+      consumerGroupName = ctx.groupId
+    )
+
+    // A partition number identifies a destination partition only when the commit contains one logical
+    // TopicPartition. The same numeric partition across multiple topics is ambiguous.
+    builder.addAll(
+      Keys.DestinationPartitionId.maybe(Option.when(offsets.size == 1)(offsets.keysIterator.next().partition.toString))
+    )
+    builder.result()
+  }
+
   def processAttributes[K, V](ctx: ProcessSpanContext, record: ConsumerRecord[K, V]): Attributes = {
     val builder = baseBuilder(
       operationName = "process",
@@ -273,7 +307,7 @@ private[otel4s] object Semconv {
     builder.addAll(Keys.KafkaMessageKey.maybe(ctx.messageKey))
     builder.addAll(Keys.KafkaMessageTombstone.maybe(consumerSingleRecordTombstone(records)))
     builder.addAll(Keys.KafkaOffset.maybe(ctx.offset))
-    builder.addAll(Keys.BatchMessageCount.maybe(Option.when(ctx.recordCount > 1)(ctx.recordCount)))
+    builder.addAll(Keys.BatchMessageCount.maybe(ctx.recordCount.filter(_ > 1)))
 
     builder.result()
   }

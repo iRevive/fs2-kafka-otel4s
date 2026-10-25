@@ -61,7 +61,10 @@ trait KafkaTracer[F[_]] {
   /** Creates producer tracing operations using the supplied metadata provider. */
   def producerSpans(metadata: ProducerMetadata.Provider[F]): ProducerSpans[F]
 
-  /** Creates consumer tracing operations using the supplied metadata provider. */
+  /** Creates consumer tracing operations using the supplied metadata provider.
+    *
+    * Use metadata from the consumer that produced the offsets when batching commits through the returned handle.
+    */
   def consumerSpans(metadata: ConsumerMetadata.Provider[F]): ConsumerSpans[F]
 
 }
@@ -135,9 +138,14 @@ object KafkaTracer {
       */
     def withBatchProcessSpanSetup(f: BatchProcessSpanContext => Option[Config.SpanSetup.Process]): Config
 
-    /** Replaces the function used to derive consumer-side `commit` / `settle` span setup from committed chunk metadata.
+    /** Configures the name, attributes, and finalization strategy of commit spans.
       *
-      * Return `None` to suppress the commit span.
+      * Applies to commits made by the consume helpers, [[ConsumerSpans.commitOffsets]], and the
+      * `KafkaTracer.consumerSpans(metadata).commitBatchWithin` pipe. Offset-only commit calls have `None` for
+      * `recordCount`, `messageKey`, and `offset` in [[CommitSpanContext]] because only commit positions are available.
+      * Return `None` to run the commit effect without a span.
+      *
+      * The active span becomes the commit span's parent. Without an active span, the commit span is a root.
       */
     def withCommitSpanSetup(f: CommitSpanContext => Option[Config.SpanSetup.Commit]): Config
 

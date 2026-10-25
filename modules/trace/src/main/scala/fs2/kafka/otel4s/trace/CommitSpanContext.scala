@@ -16,39 +16,42 @@
 
 package fs2.kafka.otel4s.trace
 
-/** Consumer-side metadata used to derive a tracing `commit` / `settle` span.
+/** Metadata passed to the commit span setup function.
   *
-  * This context describes a committed chunk of consumed records. It combines dynamic chunk information such as topics,
-  * partitions, and record count with static consumer metadata captured from the bound Kafka consumer.
+  * Commits made by the consume helpers include information about the processed records. `commitOffsets` only has
+  * topic-partition entries, so record count, message key, and record offset are unknown.
   */
 sealed trait CommitSpanContext {
 
-  /** Topics covered by the committed chunk.
+  /** Topics being committed.
     */
   def topics: Set[String]
 
-  /** Partitions covered by the committed chunk.
+  /** Partition numbers being committed. The same number can appear in several topics.
     */
   def partitions: Set[Int]
 
-  /** Number of records in the committed chunk.
+  /** Number of records represented by this commit, when known.
+    *
+    * Offset-only commits cannot determine a record count from offsets. `None` means unknown; it does not mean zero.
     */
-  def recordCount: Int
+  def recordCount: Option[Int]
 
-  /** Canonical string form of the Kafka message key when this span describes a single record and the key can be
-    * represented safely.
+  /** Message key as a string when committing one known record and its key can be converted safely. Always `None` for
+    * `commitOffsets`.
     */
   def messageKey: Option[String]
 
-  /** Kafka record offset when this span describes exactly one record.
+  /** Offset of the record when committing one known record. Always `None` for `commitOffsets`. This is a record offset,
+    * not the next position sent to Kafka when committing.
     */
   def offset: Option[Long]
 
-  /** Kafka `client.id` captured from the bound consumer, when configured.
+  /** Kafka `client.id` from the metadata provider, when available.
     */
   def clientId: Option[String]
 
-  /** Kafka `group.id` captured from the bound consumer, when configured.
+  /** Kafka `group.id` from the metadata provider, when available.
     */
   def groupId: Option[String]
 
@@ -59,7 +62,7 @@ object CommitSpanContext {
   private[otel4s] def apply(
       topics: Set[String],
       partitions: Set[Int],
-      recordCount: Int,
+      recordCount: Option[Int],
       messageKey: Option[String],
       offset: Option[Long],
       clientId: Option[String],
@@ -78,7 +81,7 @@ object CommitSpanContext {
   final private case class Impl(
       topics: Set[String],
       partitions: Set[Int],
-      recordCount: Int,
+      recordCount: Option[Int],
       messageKey: Option[String],
       offset: Option[Long],
       clientId: Option[String],

@@ -447,16 +447,25 @@ supplied effect without a span.
 
 ### Record-Oriented Syntax
 
-For `.records.evalMap(...)`-style consumers, prefer `recordsTraced` together with `commitBatchWithin`. It creates
-`receive` and per-record `process` spans but intentionally does not commit offsets or emit `commit` spans: the
-downstream commit pipe owns commits.
+For `.records.evalMap(...)`-style consumers, use `recordsTraced` with
+`kafkaTracer.consumerSpans(consumerMetadata).commitBatchWithin`. It creates `receive` and per-record `process` spans,
+then adds one commit span per committer call. The pipe reuses one span handle across batches and stream runs. Supply a
+`ConsumerMetadata.Provider` with metadata for the consumer that produced the offsets. If those values are unavailable,
+pass a provider with `ConsumerMetadata(None, None)`. The standard `fs2.kafka.commitBatchWithin` pipe remains available,
+but does not add commit spans. The traced batching pipe requires `Temporal` for timed flushes and `Parallel` for commits
+to distinct committers; the single-operation methods on `ConsumerSpans` do not require these type classes.
 
 ```scala mdoc:silent
 import fs2.Stream
-import fs2.kafka.commitBatchWithin
+import fs2.kafka.otel4s.trace.KafkaTracer
+import fs2.kafka.otel4s.trace.ConsumerMetadata
 import fs2.kafka.otel4s.trace.syntax._
 
 import scala.concurrent.duration._
+
+val consumerMetadata = ConsumerMetadata.Provider.constant[IO](
+  ConsumerMetadata(Some("orders-consumer"), Some("orders-group"))
+)
 
 def consumeRecords(
     implicit kafkaTracer: KafkaTracer[IO]
@@ -468,7 +477,7 @@ def consumeRecords(
     .recordsTraced { committable =>
       IO.println(s"Consumed record: $committable").as(committable.offset)
     }
-    .through(commitBatchWithin[IO](500, 15.seconds))
+    .through(kafkaTracer.consumerSpans(consumerMetadata).commitBatchWithin(500, 15.seconds))
 ```
 
 ### Explicit Boundaries
@@ -493,10 +502,38 @@ For per-record boundaries, use `tracedConsumer.spans.process(record)(effect)`; c
 The batch operation is also available without a client-bound adapter through
 `KafkaTracer.consumerSpans(metadataProvider)` as shown above.
 
+If your app or library commits offsets directly, wrap the commit effect with `commitOffsets` to trace it:
+
+```scala mdoc:silent
+import org.apache.kafka.clients.consumer.OffsetAndMetadata
+import org.apache.kafka.common.TopicPartition
+import fs2.kafka.otel4s.trace.{ConsumerMetadata, KafkaTracer}
+
+def commitOffsets(
+    offsets: Map[TopicPartition, OffsetAndMetadata],
+    underlyingCommit: IO[Unit]
+)(implicit kafkaTracer: KafkaTracer[IO]): IO[Unit] =
+  kafkaTracer
+    .consumerSpans(ConsumerMetadata.Provider.constant[IO](ConsumerMetadata(None, None)))
+    .commitOffsets(offsets)(underlyingCommit)
+```
+
+`commitOffsets` runs `underlyingCommit` inside a commit span. You supply the actual commit effect. An empty map runs
+the effect without a span.
+
+The span reports the topics being committed. It reports a partition only when the map has one topic-partition entry.
+Commit positions do not tell us how many records were processed, or their keys, offsets, or tombstone values, so those
+attributes are omitted. The span has no message links. Commit spans use the context active when each commit call runs;
+they do not recover the context of earlier per-record `process` spans.
+
+If a span is active, it becomes the commit span's parent. Otherwise the commit span is a root.
+The custom `kafkaTracer.consumerSpans(metadata).commitBatchWithin` pipe traces each committer call. The upstream
+`fs2.kafka.commitBatchWithin` does not automatically create commit spans.
+
 ## Notes
 
 - Reuse one `KafkaTracer` and one bound traced handle per producer or consumer resource.
-- `commitBatchWithin` remains standard `fs2-kafka`; use it normally after `recordsTraced`. Generic downstream commit pipes are not traced because they only receive offsets, not the consumed records needed for Kafka span attributes.
+- Commit pipes receive offsets, so their spans can describe topics and partitions but cannot report the number or details of the processed records. Pass metadata for the same consumer that produced the offsets when client and group attributes are needed.
 - Duplicate propagation headers use last-match extraction, matching OpenTelemetry Java Kafka instrumentation rather than the generic first-value propagator rule.
 - `injectHeaders` does not overwrite recognized record trace context. If a record already carries valid trace headers, those headers are preserved.
 - The default `PerRecordSpans` mode may emit one producer `create` span per record plus a batch `send` span. Use `SharedSendSpan` when lower telemetry volume is more important than distinct per-record trace contexts and producer-side details.
