@@ -58,23 +58,117 @@ import scala.util.chaining._
   */
 sealed trait ConsumerSpans[F[_]] {
 
-  /** Evaluates `fa` with single-record tracing from [[KafkaTracer.Config.withProcessSpanSetup]]. */
+  /** Evaluates `fa` with single-record tracing from [[KafkaTracer.Config.withProcessSpanSetup]].
+    *
+    * With the corresponding span enabled:
+    * {{{
+    * Input record: m1
+    *
+    *                          time -->
+    *                     +--------------------------+
+    * effect              |            fa            |
+    *                     +--------------------------+
+    *
+    * Span lifetime                                     Controlled by
+    * ------------------------------------------------  -------------------------
+    * > process (m1)      [=========================]   withProcessSpanSetup
+    *
+    * No automatic commit.
+    * }}}
+    *
+    * Returning `None` from the setup function removes the span row; `fa` still runs.
+    */
   def process[K: KafkaMessageKey, V, A](record: ConsumerRecord[K, V])(fa: F[A]): F[A]
 
-  /** Uses the same single-record setup as `process(record.record)(fa)`; does not commit the record's offset. */
+  /** Uses the same single-record setup as `process(record.record)(fa)`; does not commit the record's offset.
+    *
+    * With the corresponding span enabled:
+    * {{{
+    * Input record: m1 (committable)
+    *
+    *                          time -->
+    *                     +--------------------------+
+    * effect              |            fa            |
+    *                     +--------------------------+
+    *
+    * Span lifetime                                     Controlled by
+    * ------------------------------------------------  -------------------------
+    * > process (m1)      [=========================]   withProcessSpanSetup
+    *
+    * No automatic commit.
+    * }}}
+    *
+    * Returning `None` from the setup function removes the span row; `fa` still runs.
+    */
   def process[K: KafkaMessageKey, V, A](record: CommittableConsumerRecord[F, K, V])(fa: F[A]): F[A]
 
   /** Evaluates `fa` inside one root process span linked to every recognized context in the chunk.
     *
     * Empty chunks evaluate `fa` directly without metadata lookup or span setup. Nonempty chunks use
     * [[KafkaTracer.Config.withBatchProcessSpanSetup]], independently of single-record process setup.
+    *
+    * With the corresponding span enabled and nonempty input:
+    * {{{
+    * Input chunk: [m1, m2, m3]
+    *
+    *                          time -->
+    *                     +--------------------------+
+    * effect              |            fa            |
+    *                     +--------------------------+
+    *
+    * Span lifetime                                     Controlled by
+    * ------------------------------------------------  -------------------------
+    * > process batch     [=========================]   withBatchProcessSpanSetup
+    *
+    * No automatic commit.
+    * }}}
+    *
+    * Returning `None` from the setup function removes the span row; `fa` still runs.
     */
   def processBatch[K: KafkaMessageKey, V, A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A]
 
-  /** Evaluates `fa` with receive tracing from [[KafkaTracer.Config.withReceiveSpanSetup]]. */
+  /** Evaluates `fa` with receive tracing from [[KafkaTracer.Config.withReceiveSpanSetup]].
+    *
+    * With the corresponding span enabled and nonempty input:
+    * {{{
+    * Input chunk: [m1, m2, m3]
+    *
+    *                          time -->
+    *                     +--------------------------+
+    * effect              |            fa            |
+    *                     +--------------------------+
+    *
+    * Span lifetime                                     Controlled by
+    * ------------------------------------------------  -------------------------
+    * > receive           [=========================]   withReceiveSpanSetup
+    *
+    * No automatic processing or commit is added.
+    * }}}
+    *
+    * Returning `None` from the setup function removes the span row; `fa` still runs.
+    */
   def receive[K: KafkaMessageKey, V, A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A]
 
-  /** Uses the same receive setup as `receive(records.map(_.record))(fa)`; does not commit offsets. */
+  /** Uses the same receive setup as `receive(records.map(_.record))(fa)`; does not commit offsets.
+    *
+    * With the corresponding span enabled and nonempty input:
+    * {{{
+    * Input chunk: [m1, m2, m3] (committable)
+    *
+    *                          time -->
+    *                     +--------------------------+
+    * effect              |            fa            |
+    *                     +--------------------------+
+    *
+    * Span lifetime                                     Controlled by
+    * ------------------------------------------------  -------------------------
+    * > receive           [=========================]   withReceiveSpanSetup
+    *
+    * No automatic processing or commit is added.
+    * }}}
+    *
+    * Returning `None` from the setup function removes the span row; `fa` still runs.
+    */
   def receiveCommittable[K: KafkaMessageKey, V, A](records: Chunk[CommittableConsumerRecord[F, K, V]])(fa: F[A]): F[A]
 
 }

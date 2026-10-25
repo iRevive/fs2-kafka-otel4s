@@ -20,6 +20,7 @@ import cats.effect.{Deferred, IO, Ref}
 import fs2.Chunk
 import fs2.kafka._
 import io.opentelemetry.api.common.AttributeKey
+import org.typelevel.otel4s.oteljava.testkit.AttributesExpectation
 import org.typelevel.otel4s.oteljava.testkit.trace.{SpanExpectation, TraceForestExpectation}
 import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
 import org.typelevel.otel4s.Attributes
@@ -30,7 +31,6 @@ import org.typelevel.otel4s.oteljava.testkit.trace.{
   TraceExpectation
 }
 import org.typelevel.otel4s.trace.Tracer
-import scala.jdk.CollectionConverters._
 
 final class ConsumerSpansSuite extends KafkaTracingTestSupport {
 
@@ -211,17 +211,55 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
         count <- callbackCount.get
         finished <- testkit.finishedSpans
         _ <- IO {
-          val batch = finished.find(_.getName == "process").get
           assertEquals(count, 1)
-          assertEquals(batch.getLinks.size(), 2)
-          assertEquals(batch.getParentSpanId, "0000000000000000")
-          assert(batch.getLinks.asScala.exists(_.getSpanContext.getSpanId == firstContext.spanIdHex))
-          assert(batch.getLinks.asScala.exists(_.getSpanContext.getSpanId == secondContext.spanIdHex))
-          assertEquals(finished.find(_.getName == "callback").get.getParentSpanId, batch.getSpanId)
-          assertEquals(batch.getAttributes.get(AttributeKey.stringKey("messaging.destination.name")), null)
-          assertEquals(batch.getAttributes.get(AttributeKey.stringKey("messaging.destination.partition.id")), null)
-          assert(batch.getAttributes.get(AttributeKey.longKey("messaging.batch.message_count")) == 2L)
-          assertEquals(batch.getAttributes.get(AttributeKey.longKey("messaging.kafka.offset")), null)
+          assertExpected(
+            finished,
+            TraceForestExpectation.unordered(
+              root(SpanExpectation.internal("source-one").scopeName("fs2.kafka.otel4s.tests")),
+              root(SpanExpectation.internal("source-two").scopeName("fs2.kafka.otel4s.tests")),
+              root(SpanExpectation.internal("ambient").scopeName("fs2.kafka.otel4s.tests")),
+              root(
+                SpanExpectation
+                  .consumer("process")
+                  .scopeName("fs2.kafka")
+                  .attributes(
+                    AttributesExpectation.where(
+                      "mixed batch has count but no single-record destination, partition, or offset"
+                    ) { attributes =>
+                      AttributesExpectation
+                        .subset(
+                          Attributes(
+                            MessagingExperimentalAttributes.MessagingBatchMessageCount(2L),
+                            MessagingExperimentalAttributes.MessagingClientId("client"),
+                            MessagingExperimentalAttributes.MessagingConsumerGroupName("group")
+                          )
+                        )
+                        .matches(attributes) &&
+                      attributes.get[String]("messaging.destination.name").isEmpty &&
+                      attributes.get[String]("messaging.destination.partition.id").isEmpty &&
+                      attributes.get[Long]("messaging.kafka.offset").isEmpty
+                    }
+                  )
+                  .links(
+                    LinkSetExpectation.exactly(
+                      LinkExpectation.any.spanContext(
+                        SpanContextExpectation.any
+                          .traceIdHex(firstContext.traceIdHex)
+                          .spanIdHex(firstContext.spanIdHex)
+                          .remote(true)
+                      ),
+                      LinkExpectation.any.spanContext(
+                        SpanContextExpectation.any
+                          .traceIdHex(secondContext.traceIdHex)
+                          .spanIdHex(secondContext.spanIdHex)
+                          .remote(true)
+                      )
+                    )
+                  ),
+                TraceExpectation.leaf(SpanExpectation.internal("callback").scopeName("fs2.kafka.otel4s.tests"))
+              )
+            )
+          )
         }
       } yield ()
     }
@@ -249,11 +287,21 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
         _ <- spans.processBatch(Chunk.singleton(record))(IO.unit)
         finished <- testkit.finishedSpans
       } yield {
-        val batch = finished.head
-        assertEquals(batch.getName, "batch 1 1 21")
-        assert(batch.getAttributes.get(AttributeKey.longKey("messaging.batch.message_count")) == 1L)
-        assert(batch.getAttributes.get(AttributeKey.longKey("messaging.kafka.offset")) == 21L)
-        assertEquals(batch.getAttributes.get(AttributeKey.stringKey("messaging.operation.name")), "setup")
+        assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(
+              SpanExpectation
+                .consumer("batch 1 1 21")
+                .scopeName("fs2.kafka")
+                .attributesSubset(
+                  MessagingExperimentalAttributes.MessagingBatchMessageCount(1L),
+                  MessagingExperimentalAttributes.MessagingKafkaOffset(21L),
+                  MessagingExperimentalAttributes.MessagingOperationName("setup")
+                )
+            )
+          )
+        )
       }
     }
   }
@@ -269,7 +317,10 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
         _ <- spans.processBatch(Chunk.singleton(record))(IO.unit)
         _ <- spans.process(record)(IO.unit)
         finished <- testkit.finishedSpans
-      } yield assertEquals(finished.map(_.getName), List("process topic"))
+      } yield assertExpected(
+        finished,
+        TraceForestExpectation.unordered(root(SpanExpectation.consumer("process topic").scopeName("fs2.kafka")))
+      )
     }
   }
 

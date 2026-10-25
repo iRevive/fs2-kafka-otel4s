@@ -295,6 +295,99 @@ def processBatch(
     .processBatch(records)(callback)
 ```
 
+### Consumer span execution
+
+The diagrams assume all spans are enabled. Bars show span lifetimes; widths are illustrative. Indentation is reserved
+for actual parent-child span relationships. Receive and process spans are independent roots linked to incoming message
+contexts, so their rows are aligned even when their lifetimes overlap. With no ambient application span, commit is also
+a root; otherwise it uses the ambient span as its parent. These diagrams assume no ambient application span.
+
+Returning `None` from the setup function in the right-hand column removes only that span row. Handler execution and
+commit behavior are unchanged. `withoutReceiveSpans` suppresses receive spans, `withoutProcessSpans` suppresses both
+single-record and batch process spans, and `withoutCommitSpans` suppresses commit spans.
+
+`consumeRecordTraced`: Invokes the handler once per record and commits after all handlers succeed.
+
+```text
+Input chunk: [m1, m2, m3]
+
+                         time -->
+                    +--------+--------+--------+--------+
+handler             |handle  |handle  |handle  |commit  |
+                    |  m1    |  m2    |  m3    |offsets |
+                    +--------+--------+--------+--------+
+
+Span lifetime                                             Controlled by
+--------------------------------------------------------  -------------------------
+> receive           [=========================]           withReceiveSpanSetup
+> process (m1)      [=======]                             withProcessSpanSetup
+> process (m2)               [=======]                    withProcessSpanSetup
+> process (m3)                        [=======]           withProcessSpanSetup
+> commit                                       [=======]  withCommitSpanSetup
+```
+
+`consumeChunkTraced`: Invokes one handler for the entire chunk and commits after it succeeds.
+
+```text
+Input chunk: [m1, m2, m3]
+
+                         time -->
+                    +--------------------------+--------+
+handler             | handleChunk([m1,m2,m3])  |commit  |
+                    |       called once        |offsets |
+                    +--------------------------+--------+
+
+Span lifetime                                             Controlled by
+--------------------------------------------------------  -------------------------
+> receive           [=========================]           withReceiveSpanSetup
+> process batch     [=========================]           withBatchProcessSpanSetup
+> commit                                       [=======]  withCommitSpanSetup
+```
+
+`recordsTraced`: Finishes delivery tracing before invoking the per-record handlers. Committing belongs to the caller.
+
+```text
+Input chunk: [m1, m2, m3]
+
+                         time -->
+                    +--------+--------+--------+--------+
+work                |deliver |handle  |handle  |handle  |
+                    | chunk  |  m1    |  m2    |  m3    |
+                    +--------+--------+--------+--------+
+
+Span lifetime                                             Controlled by
+--------------------------------------------------------  -------------------------
+> receive           [=======]                             withReceiveSpanSetup
+> process (m1)               [=======]                    withProcessSpanSetup
+> process (m2)                        [=======]           withProcessSpanSetup
+> process (m3)                                 [=======]  withProcessSpanSetup
+
+Results are emitted after each handler; no automatic commit.
+```
+
+Failure or cancellation of an owned-commit helper's callback skips its commit. Selecting only the latest record per
+key inside a chunk callback still commits the original chunk's offsets after success. Optional explicit `spans.process`
+calls add root spans only around selected work; they are controlled by `withProcessSpanSetup`. To keep only those
+selected records' process spans, configure `withBatchProcessSpanSetup(_ => None)`.
+
+The standard fs2-kafka `commitBatchWithin` pipe commits collected offsets by size or time without adding commit spans.
+Its commit batches may differ from the consumed chunks.
+
+Explicit `ConsumerSpans` operations create only their own span. The caller chooses execution boundaries and commits:
+
+```text
+Operation                                   Span created       Controlled by
+------------------------------------------  -----------------  -------------------------
+spans.process(record)(effect)               > process          withProcessSpanSetup
+spans.process(committableRecord)(effect)    > process          withProcessSpanSetup
+spans.processBatch(records)(effect)         > process batch    withBatchProcessSpanSetup
+spans.receive(records)(effect)              > receive          withReceiveSpanSetup
+spans.receiveCommittable(records)(effect)    > receive          withReceiveSpanSetup
+```
+
+Each span surrounds the supplied effect; none of these operations commits offsets. Empty batch operations run the
+supplied effect without a span.
+
 ### Record-Oriented Syntax
 
 For `.records.evalMap(...)`-style consumers, prefer `recordsTraced` together with `commitBatchWithin`. It creates

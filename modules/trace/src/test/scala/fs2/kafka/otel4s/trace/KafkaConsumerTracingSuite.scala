@@ -19,8 +19,8 @@ package fs2.kafka.otel4s.trace
 import cats.effect.{Deferred, IO, Ref}
 import fs2.Chunk
 import fs2.kafka._
-import io.opentelemetry.api.common.AttributeKey
 import fs2.kafka.consumer.KafkaConsumeChunk.CommitNow
+import org.typelevel.otel4s.oteljava.testkit.AttributesExpectation
 import org.typelevel.otel4s.Attributes
 import org.typelevel.otel4s.oteljava.testkit.trace._
 import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
@@ -149,11 +149,28 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
         callbackCount <- callbacks.get
         spans <- testkit.finishedSpans
       } yield {
-        val processSpans = spans.filter(_.getName == "process topic")
         assertEquals(callbackCount, 1)
-        assertEquals(processSpans.size, 1)
-        assert(processSpans.head.getAttributes.get(AttributeKey.longKey("messaging.batch.message_count")) == 2L)
-        assert(processSpans.head.getAttributes.get(AttributeKey.longKey("messaging.kafka.offset")) == null)
+        assertExpected(
+          spans,
+          TraceForestExpectation.unordered(
+            root(SpanExpectation.client("poll topic").scopeName("fs2.kafka")),
+            root(
+              SpanExpectation
+                .consumer("process topic")
+                .scopeName("fs2.kafka")
+                .attributes(AttributesExpectation.where("batch count is two and offset is absent") { attributes =>
+                  AttributesExpectation
+                    .subset(
+                      Attributes(
+                        MessagingExperimentalAttributes.MessagingBatchMessageCount(2L)
+                      )
+                    )
+                    .matches(attributes) && attributes.get[Long]("messaging.kafka.offset").isEmpty
+                })
+            ),
+            root(SpanExpectation.client("commit topic").scopeName("fs2.kafka"))
+          )
+        )
       }
     }
   }
@@ -178,13 +195,19 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
         _ <- fiber.cancel
         commitsAfterCancel <- cancelCommits.get
         finished <- testkit.finishedSpans
-        processSpans = finished.filter(_.getName == "process topic")
       } yield {
         assertEquals(error, Left(failure))
         assertEquals(commitsAfterError, 0)
         assertEquals(commitsAfterCancel, 0)
-        assertEquals(processSpans.size, 2)
-        assert(processSpans.forall(_.getStatus.getStatusCode == io.opentelemetry.api.trace.StatusCode.ERROR))
+        assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(SpanExpectation.client("poll topic").scopeName("fs2.kafka").status(StatusExpectation.error)),
+            root(SpanExpectation.consumer("process topic").scopeName("fs2.kafka").status(StatusExpectation.error)),
+            root(SpanExpectation.client("poll topic").scopeName("fs2.kafka").status(StatusExpectation.error)),
+            root(SpanExpectation.consumer("process topic").scopeName("fs2.kafka").status(StatusExpectation.error))
+          )
+        )
       }
     }
   }

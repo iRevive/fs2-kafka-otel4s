@@ -88,6 +88,34 @@ trait TracedKafkaConsumer[F[_], K, V] {
     * Configure [[KafkaTracer.Config.withoutReceiveSpans]], [[KafkaTracer.Config.withoutProcessSpans]], or
     * [[KafkaTracer.Config.withoutCommitSpans]] to suppress individual spans without changing consumption or commit
     * behavior.
+    *
+    * Execution scope for one chunk, with all spans enabled and no ambient application span:
+    * {{{
+    * Input chunk: [m1, m2, m3]
+    *
+    *                          time -->
+    *                     +--------------------------+--------+
+    * handler             | handleChunk([m1,m2,m3])  |commit  |
+    *                     |       called once        |offsets |
+    *                     +--------------------------+--------+
+    *
+    * Span lifetime                                             Controlled by
+    * --------------------------------------------------------  -------------------------
+    * > receive           [=========================]           withReceiveSpanSetup
+    * > process batch     [=========================]           withBatchProcessSpanSetup
+    * > commit                                       [=======]  withCommitSpanSetup
+    * }}}
+    *
+    * Span rows are aligned because receive and process spans are independent roots. Bars show timing; widths are
+    * illustrative. Returning `None` from a setup function removes only its span row; handler execution and commit
+    * behavior are unchanged. Indentation is reserved for actual parent-child span relationships.
+    *
+    * Process and receive spans are roots linked to incoming message contexts. Failure or cancellation of the callback
+    * skips the owned commit. Selecting the latest record per key inside the callback still commits the original chunk's
+    * offsets after success. Explicit `spans.process` calls add spans only around selected work, controlled by
+    * [[KafkaTracer.Config.withProcessSpanSetup]].
+    *
+    * To keep only those explicit per-record process spans, configure `withBatchProcessSpanSetup(_ => None)`.
     */
   def consumeChunkTraced(chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]): F[Nothing]
 
@@ -102,6 +130,32 @@ trait TracedKafkaConsumer[F[_], K, V] {
     * Configure [[KafkaTracer.Config.withoutReceiveSpans]], [[KafkaTracer.Config.withoutProcessSpans]], or
     * [[KafkaTracer.Config.withoutCommitSpans]] to suppress individual spans without changing consumption or commit
     * behavior.
+    *
+    * Execution scope for one chunk, with all spans enabled and no ambient application span:
+    * {{{
+    * Input chunk: [m1, m2, m3]
+    *
+    *                          time -->
+    *                     +--------+--------+--------+--------+
+    * handler             |handle  |handle  |handle  |commit  |
+    *                     |  m1    |  m2    |  m3    |offsets |
+    *                     +--------+--------+--------+--------+
+    *
+    * Span lifetime                                             Controlled by
+    * --------------------------------------------------------  -------------------------
+    * > receive           [=========================]           withReceiveSpanSetup
+    * > process (m1)      [=======]                             withProcessSpanSetup
+    * > process (m2)               [=======]                    withProcessSpanSetup
+    * > process (m3)                        [=======]           withProcessSpanSetup
+    * > commit                                       [=======]  withCommitSpanSetup
+    * }}}
+    *
+    * Span rows are aligned because receive and process spans are independent roots. Bars show timing; widths are
+    * illustrative. Returning `None` from a setup function removes only its span row; handler execution and commit
+    * behavior are unchanged. Indentation is reserved for actual parent-child span relationships.
+    *
+    * Process and receive spans are roots linked to incoming message contexts. Failure or cancellation of a handler
+    * skips the owned commit.
     */
   def consumeRecordTraced[A](recordProcessor: ConsumerRecord[K, V] => F[A]): F[Nothing]
 
@@ -170,6 +224,33 @@ trait TracedKafkaConsumer[F[_], K, V] {
     * This method does not commit offsets or emit `commit` spans. Use it with a downstream commit pipe such as
     * `commitBatchWithin`; generic commit pipes only receive offsets, not the consumed records required for Kafka span
     * attributes.
+    *
+    * Execution scope for one chunk, with all spans enabled and no ambient application span:
+    * {{{
+    * Input chunk: [m1, m2, m3]
+    *
+    *                          time -->
+    *                     +--------+--------+--------+--------+
+    * work                |deliver |handle  |handle  |handle  |
+    *                     | chunk  |  m1    |  m2    |  m3    |
+    *                     +--------+--------+--------+--------+
+    *
+    * Span lifetime                                             Controlled by
+    * --------------------------------------------------------  -------------------------
+    * > receive           [=======]                             withReceiveSpanSetup
+    * > process (m1)               [=======]                    withProcessSpanSetup
+    * > process (m2)                        [=======]           withProcessSpanSetup
+    * > process (m3)                                 [=======]  withProcessSpanSetup
+    *
+    * Results are emitted after each handler; no automatic commit.
+    * }}}
+    *
+    * Span rows are aligned because receive and process spans are independent roots. Bars show timing; widths are
+    * illustrative. Returning `None` from a setup function removes only its span row; handler execution and commit
+    * behavior are unchanged. Indentation is reserved for actual parent-child span relationships.
+    *
+    * Process and receive spans are roots linked to incoming message contexts. A downstream standard fs2-kafka commit
+    * pipe commits offsets without adding tracing on its own.
     */
   def recordsTraced[A](f: CommittableConsumerRecord[F, K, V] => F[A]): Stream[F, A]
 
