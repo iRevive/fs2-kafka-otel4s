@@ -6,6 +6,20 @@ Producer instrumentation decides which spans to create from three inputs:
 - whether each record already contains valid trace context in its Kafka headers;
 - the configured `BatchSpanMode`.
 
+## Client-free operations
+
+`KafkaTracer.producerSpans(ProducerMetadata.Provider.constant(metadata))` creates a configured `ProducerSpans` handle
+without a Kafka client. Like `ConsumerSpans`, it takes key and value types at each operation. The producer adapter
+exposes its own handle through `.spans` and delegates traced sends to the same implementation.
+
+Call `spans.produce(records)(send)`, where `send` publishes the prepared records passed to it and returns the usual
+two-stage fs2-kafka effect. The same span matrix, attribute precedence, header preservation, batch configuration,
+suppression, and finalization rules below apply. Empty input calls `send` without metadata lookup or spans. A noop
+handle passes the original records directly to `send` without metadata lookup or propagation.
+
+The caller must evaluate the returned acknowledgment effect to finalize the send span. Transactions and serializer
+switching remain in `TracedKafkaProducer`; a framework using the primitive owns its transaction boundary.
+
 ## Span creation matrix
 
 In this document, **record trace context** means valid trace information in a record's Kafka headers that the configured propagator can extract. OpenTelemetry calls this the _message creation context_; the shorter wording emphasizes where the context exists and avoids implying that it must be an active parent span.

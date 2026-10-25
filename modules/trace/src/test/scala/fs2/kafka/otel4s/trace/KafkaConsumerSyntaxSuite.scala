@@ -78,6 +78,9 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
         ): TracedKafkaConsumer[IO, K, V] =
           expected.asInstanceOf[TracedKafkaConsumer[IO, K, V]]
 
+        override def producerSpans(metadata: ProducerMetadata.Provider[IO]): ProducerSpans[IO] =
+          KafkaTracer.noop[IO].producerSpans(metadata)
+
         override def consumerSpans(metadata: ConsumerMetadata.Provider[IO]): ConsumerSpans[IO] =
           throw new AssertionError("unexpected consumer spans")
       }

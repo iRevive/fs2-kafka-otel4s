@@ -58,6 +58,9 @@ trait KafkaTracer[F[_]] {
       consumer: KafkaConsumer[F, K, V]
   ): TracedKafkaConsumer[F, K, V]
 
+  /** Creates producer tracing operations using the supplied metadata provider. */
+  def producerSpans(metadata: ProducerMetadata.Provider[F]): ProducerSpans[F]
+
   /** Creates consumer tracing operations using the supplied metadata provider. */
   def consumerSpans(metadata: ConsumerMetadata.Provider[F]): ConsumerSpans[F]
 
@@ -415,6 +418,9 @@ object KafkaTracer {
         config
       )
 
+    override def producerSpans(metadata: ProducerMetadata.Provider[F]): ProducerSpans[F] =
+      ProducerSpans[F](metadata, config)
+
     override def consumerSpans(metadata: ConsumerMetadata.Provider[F]): ConsumerSpans[F] =
       ConsumerSpans[F](metadata, config)
 
@@ -431,6 +437,9 @@ object KafkaTracer {
         consumer: KafkaConsumer[F, K, V]
     ): TracedKafkaConsumer[F, K, V] =
       TracedKafkaConsumer.noop(consumer)
+
+    override def producerSpans(metadata: ProducerMetadata.Provider[F]): ProducerSpans[F] =
+      ProducerSpans.noop[F]
 
     override def consumerSpans(metadata: ConsumerMetadata.Provider[F]): ConsumerSpans[F] =
       ConsumerSpans.noop[F]
