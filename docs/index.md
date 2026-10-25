@@ -275,6 +275,35 @@ def consumeChunkBatches(
     }
 ```
 
+If you want a child span for each message you actually process, create those spans explicitly inside the chunk callback:
+
+```scala mdoc:silent
+import fs2.kafka.ConsumerRecord
+import org.typelevel.otel4s.trace.Tracer
+
+def consumeWithChildSpans(
+    tracedConsumer: TracedKafkaConsumer[IO, String, String],
+    handle: ConsumerRecord[String, String] => IO[Unit]
+)(implicit tracer: Tracer[IO]): IO[Nothing] =
+  tracedConsumer.consumeChunkTraced { chunk =>
+    chunk.traverse_ { record =>
+      Tracer[IO].span("processor").surround(handle(record))
+    }.as(CommitNow)
+  }
+```
+
+With all spans enabled, each `processor` span uses the current batch process span as its parent. With no ambient app
+span, the parentage is:
+
+```text
+> receive
+> process batch
+  > processor (m1)
+  > processor (m2)
+  > processor (m3)
+> commit
+```
+
 By default, both traced chunk helpers create all three span types. Use `KafkaTracer.Config.withoutReceiveSpans`,
 `withoutProcessSpans`, or `withoutCommitSpans` to suppress individual span types without changing processing or commit
 behavior. Use `consumeChunk` only when you intentionally want raw `fs2-kafka` behavior without tracing.

@@ -5,7 +5,7 @@
 Add the trace module dependency:
 
 ```scala
-libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "0.3-4c06118-20261025T183420Z-SNAPSHOT"
+libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "0.3-025a063-20261025T213156Z-SNAPSHOT"
 ```
 
 Create normal `fs2-kafka` settings first. If you want stable broker endpoint attributes on spans, configure them explicitly through `KafkaTracer.Config`.
@@ -273,6 +273,35 @@ def consumeChunkBatches(
     .consumeChunkTraced { chunk =>
       chunk.traverse_(record => IO.println(s"Received record: $record")).as(CommitNow)
     }
+```
+
+If you want a child span for each message you actually process, create those spans explicitly inside the chunk callback:
+
+```scala
+import fs2.kafka.ConsumerRecord
+import org.typelevel.otel4s.trace.Tracer
+
+def consumeWithChildSpans(
+    tracedConsumer: TracedKafkaConsumer[IO, String, String],
+    handle: ConsumerRecord[String, String] => IO[Unit]
+)(implicit tracer: Tracer[IO]): IO[Nothing] =
+  tracedConsumer.consumeChunkTraced { chunk =>
+    chunk.traverse_ { record =>
+      Tracer[IO].span("processor").surround(handle(record))
+    }.as(CommitNow)
+  }
+```
+
+With all spans enabled, each `processor` span uses the current batch process span as its parent. With no ambient app
+span, the parentage is:
+
+```text
+> receive
+> process batch
+  > processor (m1)
+  > processor (m2)
+  > processor (m3)
+> commit
 ```
 
 By default, both traced chunk helpers create all three span types. Use `KafkaTracer.Config.withoutReceiveSpans`,

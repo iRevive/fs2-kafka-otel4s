@@ -116,6 +116,24 @@ trait TracedKafkaConsumer[F[_], K, V] {
     * [[KafkaTracer.Config.withProcessSpanSetup]].
     *
     * To keep only those explicit per-record process spans, configure `withBatchProcessSpanSetup(_ => None)`.
+    *
+    * To create app child spans for each message you actually process, use the current batch process span as parent:
+    * {{{
+    * tracedConsumer.consumeChunkTraced { chunk =>
+    *   chunk.traverse_ { record =>
+    *     Tracer[IO].span("processor").surround(handle(record))
+    *   }.as(CommitNow)
+    * }
+    * }}}
+    * With all spans enabled and no ambient app span, the parentage is:
+    * {{{
+    * > receive
+    * > process batch
+    *   > processor (m1)
+    *   > processor (m2)
+    *   > processor (m3)
+    * > commit
+    * }}}
     */
   def consumeChunkTraced(chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]): F[Nothing]
 
