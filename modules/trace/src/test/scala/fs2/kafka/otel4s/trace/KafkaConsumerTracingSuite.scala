@@ -16,9 +16,10 @@
 
 package fs2.kafka.otel4s.trace
 
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref}
 import fs2.Chunk
 import fs2.kafka._
+import io.opentelemetry.api.common.AttributeKey
 import fs2.kafka.consumer.KafkaConsumeChunk.CommitNow
 import org.typelevel.otel4s.Attributes
 import org.typelevel.otel4s.oteljava.testkit.trace._
@@ -128,6 +129,64 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
           }
         } yield ()
       }
+  }
+
+  test("consumeChunkTraced uses one batch process span for the whole callback chunk") {
+    KafkaTracerTestkit.create().use { testkit =>
+      val records = List(
+        ConsumerRecord("topic", 0, 1L, "k1", "v1"),
+        ConsumerRecord("topic", 0, 2L, "k2", "v2")
+      )
+      for {
+        callbacks <- Ref[IO].of(0)
+        consumer <- IO.pure(
+          StubKafkaConsumer.streaming(records.map(StubKafkaConsumer.committableRecord(_)))
+        )
+        traced <- testkit.tracedConsumer[String, String](consumer)
+        _ <- traced.consumeChunkTraced { chunk =>
+          callbacks.update(_ + 1) *> IO(assertEquals(chunk.size, 2)).as(CommitNow)
+        }.attempt
+        callbackCount <- callbacks.get
+        spans <- testkit.finishedSpans
+      } yield {
+        val processSpans = spans.filter(_.getName == "process topic")
+        assertEquals(callbackCount, 1)
+        assertEquals(processSpans.size, 1)
+        assert(processSpans.head.getAttributes.get(AttributeKey.longKey("messaging.batch.message_count")) == 2L)
+        assert(processSpans.head.getAttributes.get(AttributeKey.longKey("messaging.kafka.offset")) == null)
+      }
+    }
+  }
+
+  test("consumeChunkTraced skips owned commits when the batch callback errors or is canceled") {
+    KafkaTracerTestkit.create().use { testkit =>
+      val record = ConsumerRecord("topic", 0, 1L, "key", "value")
+      val failure = new RuntimeException("batch failed")
+      for {
+        errorCommits <- Ref[IO].of(0)
+        errorConsumer = StubKafkaConsumer.streaming(List(committableRecord(record, errorCommits)))
+        errorTraced <- testkit.tracedConsumer[String, String](errorConsumer)
+        error <- errorTraced.consumeChunkTraced(_ => IO.raiseError[CommitNow.type](failure)).attempt
+        commitsAfterError <- errorCommits.get
+        cancelCommits <- Ref[IO].of(0)
+        cancelConsumer = StubKafkaConsumer.streaming(List(committableRecord(record, cancelCommits)))
+        cancelTraced <- testkit.tracedConsumer[String, String](cancelConsumer)
+        started <- Deferred[IO, Unit]
+        gate <- Deferred[IO, Unit]
+        fiber <- cancelTraced.consumeChunkTraced(_ => started.complete(()) *> gate.get.as(CommitNow)).start
+        _ <- started.get
+        _ <- fiber.cancel
+        commitsAfterCancel <- cancelCommits.get
+        finished <- testkit.finishedSpans
+        processSpans = finished.filter(_.getName == "process topic")
+      } yield {
+        assertEquals(error, Left(failure))
+        assertEquals(commitsAfterError, 0)
+        assertEquals(commitsAfterCancel, 0)
+        assertEquals(processSpans.size, 2)
+        assert(processSpans.forall(_.getStatus.getStatusCode == io.opentelemetry.api.trace.StatusCode.ERROR))
+      }
+    }
   }
 
   test("consumeChunkTraced(chunk) can disable delivery and commit spans") {

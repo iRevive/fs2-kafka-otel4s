@@ -121,6 +121,21 @@ private[otel4s] object Semconv {
       groupId = groupId
     )
 
+  def batchProcessSpanContext[K: KafkaMessageKey, V](
+      records: Chunk[ConsumerRecord[K, V]],
+      clientId: Option[String],
+      groupId: Option[String]
+  ): BatchProcessSpanContext =
+    BatchProcessSpanContext(
+      topics = records.iterator.map(_.topic).toSet,
+      partitions = records.iterator.map(_.partition).toSet,
+      recordCount = records.size,
+      messageKey = consumerSingleRecordMessageKey(records),
+      offset = consumerSingleRecordOffset(records),
+      clientId = clientId,
+      groupId = groupId
+    )
+
   def commitSpanContext[K: KafkaMessageKey, V](
       records: Chunk[ConsumerRecord[K, V]],
       clientId: Option[String],
@@ -214,6 +229,28 @@ private[otel4s] object Semconv {
     builder.addAll(Keys.KafkaMessageKey.maybe(ctx.messageKey))
     builder.addAll(Keys.KafkaMessageTombstone.maybe(tombstoneAttribute(record.value)))
     builder.addOne(Keys.KafkaOffset(ctx.offset))
+
+    builder.result()
+  }
+
+  def batchProcessAttributes[K, V](
+      ctx: BatchProcessSpanContext,
+      records: Chunk[ConsumerRecord[K, V]]
+  ): Attributes = {
+    val builder = baseBuilder(
+      operationName = "process",
+      operationType = "process",
+      topic = singleton(ctx.topics),
+      clientId = ctx.clientId,
+      consumerGroupName = ctx.groupId
+    )
+
+    builder.addAll(Keys.DestinationPartitionId.maybe(consumerSingleLogicalPartition(records).map(_.toString)))
+    builder.addAll(Keys.KafkaMessageKey.maybe(ctx.messageKey))
+    builder.addAll(Keys.KafkaMessageTombstone.maybe(consumerSingleRecordTombstone(records)))
+    builder.addAll(Keys.KafkaOffset.maybe(ctx.offset))
+    // This method is specifically a batch operation, including when the chunk has one record.
+    builder.addOne(Keys.BatchMessageCount(ctx.recordCount.toLong))
 
     builder.result()
   }

@@ -221,22 +221,25 @@ Consumer tracing is explicit. The library does not try to transparently instrume
 
 Import `fs2.kafka.otel4s.trace.syntax._` once and then choose the shape that matches your consumer:
 
-- `.consumeChunk(...)` for raw, untraced chunk-oriented flows
-- `.consumeChunkTraced(...)` for chunk-callback flows with `receive`, per-record `process`, and owned `commit` spans
+- `underlying.consumeChunk(...)` for raw, untraced chunk-oriented flows
+- `.consumeChunkTraced(...)` for chunk-callback flows with `receive`, one batch `process` span, and owned `commit` spans
 - `.consumeRecordTraced(...)` for per-record callback flows with `receive`, per-record `process`, and owned `commit` spans
 - `.recordsTraced(...)` for `.records.evalMap(...)`-style flows with `receive` and per-record `process` spans
-- `receiveTraced` and `processTraced` when you need explicit boundaries inside chunked or partitioned streams
+- `tracedConsumer.spans.receive(...)`, `.process(...)`, and `.processBatch(...)` when you need explicit boundaries
 
 `.traced(...)` accepts either a bound `KafkaTracer` or a `KafkaTracer.Config`.
 
 ### Chunk-Oriented Syntax
 
-`consumeChunkTraced` and `consumeRecordTraced` consume chunks from all assigned partitions concurrently. They create a
-chunk-level `receive` span, add a `process` span for every record, and commit offsets after the callback has completed
-successfully. The owned final offset commit is wrapped in a `commit` span with `messaging.operation.type=settle`.
+`consumeChunkTraced` and `consumeRecordTraced` consume chunks from all assigned partitions concurrently. Both create a
+chunk-level `receive` span and commit offsets only after processing succeeds. `consumeChunkTraced` invokes its callback
+once inside one batch `process` span linked to each recognized incoming record context. It records
+`messaging.batch.message_count` even for a singleton chunk. `consumeRecordTraced` invokes the callback once per record
+inside that record's `process` span. The owned final offset commit runs after the receive and process scopes complete
+and is wrapped in a `commit` span with `messaging.operation.type=settle`.
 
-The chunk callback overload wraps the entire callback in the `process` span for every record in its chunk. The
-per-record callback overload evaluates each callback in its corresponding `process` span.
+The `receive` span in these two owned-commit helpers covers the callback processing phase. In `recordsTraced`, the
+`receive` span ends after delivery of each chunk, before downstream per-record callbacks run.
 
 ```scala mdoc:silent
 import fs2.kafka.KafkaConsumer
@@ -276,6 +279,22 @@ By default, both traced chunk helpers create all three span types. Use `KafkaTra
 `withoutProcessSpans`, or `withoutCommitSpans` to suppress individual span types without changing processing or commit
 behavior. Use `consumeChunk` only when you intentionally want raw `fs2-kafka` behavior without tracing.
 
+Client-free callers can use the same batch process operation with an explicit metadata snapshot:
+
+```scala mdoc:silent
+import fs2.Chunk
+import fs2.kafka.ConsumerRecord
+import fs2.kafka.otel4s.trace.{ConsumerMetadata, KafkaTracer}
+
+def processBatch(
+    records: Chunk[ConsumerRecord[String, String]],
+    callback: IO[Unit]
+)(implicit kafkaTracer: KafkaTracer[IO]): IO[Unit] =
+  kafkaTracer
+    .consumerSpans(ConsumerMetadata.Provider.constant[IO](ConsumerMetadata(None, None)))
+    .processBatch(records)(callback)
+```
+
 ### Record-Oriented Syntax
 
 For `.records.evalMap(...)`-style consumers, prefer `recordsTraced` together with `commitBatchWithin`. It creates
@@ -302,37 +321,27 @@ def consumeRecords(
     .through(commitBatchWithin[IO](500, 15.seconds))
 ```
 
-### Local Syntax For Explicit Boundaries
+### Explicit Boundaries
 
-When you are already working with chunked or partitioned consumer streams, local syntax makes the explicit tracing calls much lighter.
+When you are already working with chunked or partitioned consumer streams, call the configured operations on
+`tracedConsumer.spans`:
 
 ```scala mdoc:silent
+import fs2.Chunk
+import fs2.kafka.ConsumerRecord
 import fs2.kafka.otel4s.trace.TracedKafkaConsumer
-import fs2.kafka.otel4s.trace.syntax._
 
-def consumePartitioned(
-    implicit kafkaTracer: KafkaTracer[IO]
-): Stream[IO, Unit] =
-  KafkaConsumer
-    .stream[IO, String, String](consumerSettings)
-    .subscribeTo("orders")
-    .traced(kafkaTracer)
-    .flatMap { tracedConsumer =>
-      implicit val tc: TracedKafkaConsumer[IO, String, String] = tracedConsumer
-
-      tracedConsumer.partitionedStream.flatMap(
-        _.chunks.evalMap { chunk =>
-          chunk.receiveTraced {
-            chunk.traverse_(record =>
-              record.processTraced {
-                IO.println(s"Processed record: $record")
-              }
-            )
-          }
-        }
-      )
-    }
+def processWithSelectedConsumer(
+    records: Chunk[ConsumerRecord[String, String]],
+    tracedConsumer: TracedKafkaConsumer[IO, String, String]
+): IO[Unit] =
+  tracedConsumer.spans.processBatch(records)(IO.println(records))
 ```
+
+For per-record boundaries, use `tracedConsumer.spans.process(record)(effect)`; choose the effect passed to
+`tracedConsumer.spans.receiveCommittable(chunk)(effect)` to define exactly how much work runs inside the receive span.
+The batch operation is also available without a client-bound adapter through
+`KafkaTracer.consumerSpans(metadataProvider)` as shown above.
 
 ## Notes
 

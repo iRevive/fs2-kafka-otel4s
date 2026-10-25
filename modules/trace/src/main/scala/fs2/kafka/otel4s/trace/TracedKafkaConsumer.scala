@@ -69,8 +69,8 @@ trait TracedKafkaConsumer[F[_], K, V] {
   /** Delegates to `underlying.consumeChunk` without adding tracing.
     *
     * This passthrough keeps raw chunk-oriented `fs2-kafka` code available on the traced handle. Use
-    * [[consumeChunkTraced]] or [[consumeRecordTraced]] when you want `receive`, per-record `process`, and owned
-    * `commit` tracing.
+    * [[consumeChunkTraced]] for one batch `process` span or [[consumeRecordTraced]] for per-record `process` spans,
+    * each with `receive` and owned `commit` tracing.
     */
   @deprecated("Use underlying.consumeChunk", "0.3")
   final def consumeChunk(
@@ -80,10 +80,10 @@ trait TracedKafkaConsumer[F[_], K, V] {
 
   /** Consume from all assigned partitions concurrently, tracing each emitted chunk.
     *
-    * Each emitted committable chunk is wrapped in a chunk-level `receive` span via [[receiveCommittable]], then in a
-    * `process` span for each record while the supplied `chunkProcessor` runs. The callback receives the plain
-    * [[ConsumerRecord]] values for that chunk. Offsets from the corresponding committable records are collected and
-    * committed after the callback effect completes successfully inside a `commit` span.
+    * Each emitted committable chunk is wrapped in a chunk-level `receive` span via [[receiveCommittable]], then in one
+    * batch `process` span while the supplied `chunkProcessor` runs. The callback receives the plain [[ConsumerRecord]]
+    * values for that chunk and runs once. Offsets from the corresponding committable records are collected and
+    * committed after the callback effect completes successfully, outside the receive span and inside a `commit` span.
     *
     * Configure [[KafkaTracer.Config.withoutReceiveSpans]], [[KafkaTracer.Config.withoutProcessSpans]], or
     * [[KafkaTracer.Config.withoutCommitSpans]] to suppress individual spans without changing consumption or commit
@@ -202,7 +202,7 @@ object TracedKafkaConsumer {
       def handleChunk(chunk: Chunk[CommittableConsumerRecord[F, K, V]]): F[Unit] = {
         val (offsets, records) = offsetsAndRecords(chunk)
 
-        spans.receiveCommittable(chunk)(processAll(records)(chunkProcessor(records))) >>
+        spans.receiveCommittable(chunk)(spans.processBatch(records)(chunkProcessor(records))) >>
           spanCore.commit(records)(offsets.commit)
       }
 
@@ -221,9 +221,6 @@ object TracedKafkaConsumer {
 
       handleChunkImpl(handleChunk)
     }
-
-    private def processAll[A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A] =
-      records.toList.foldRight(fa)((record, acc) => spans.process(record)(acc))
 
     private def offsetsAndRecords(
         chunk: Chunk[CommittableConsumerRecord[F, K, V]]
