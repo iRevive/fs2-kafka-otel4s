@@ -82,6 +82,7 @@ object KafkaTracer {
     private[otel4s] def sendSpanSetup: SendSpanContext => Option[Config.SpanSetup.Send]
     private[otel4s] def receiveSpanSetup: ReceiveSpanContext => Option[Config.SpanSetup.Receive]
     private[otel4s] def processSpanSetup: ProcessSpanContext => Option[Config.SpanSetup.Process]
+    private[otel4s] def batchProcessSpanSetup: BatchProcessSpanContext => Option[Config.SpanSetup.Process]
     private[otel4s] def commitSpanSetup: CommitSpanContext => Option[Config.SpanSetup.Commit]
 
     /** Replaces the constant attributes attached to every span emitted by this library.
@@ -120,11 +121,19 @@ object KafkaTracer {
       */
     def withReceiveSpanSetup(f: ReceiveSpanContext => Option[Config.SpanSetup.Receive]): Config
 
-    /** Replaces the function used to derive consumer-side `process` span setup from record metadata.
+    /** Replaces the function used to derive consumer-side single-record `process` span setup from record metadata.
       *
-      * Return `None` to suppress the process span.
+      * Return `None` to suppress that single-record process span. For the separate chunk operation, use
+      * [[withBatchProcessSpanSetup]].
       */
     def withProcessSpanSetup(f: ProcessSpanContext => Option[Config.SpanSetup.Process]): Config
+
+    /** Replaces setup for the single process span created by [[ConsumerSpans.processBatch]].
+      *
+      * The context summarizes all records and exposes per-record offset and key only for a singleton chunk. This hook
+      * is independent of [[withProcessSpanSetup]], which configures single-record `process` operations.
+      */
+    def withBatchProcessSpanSetup(f: BatchProcessSpanContext => Option[Config.SpanSetup.Process]): Config
 
     /** Replaces the function used to derive consumer-side `commit` / `settle` span setup from committed chunk metadata.
       *
@@ -147,7 +156,7 @@ object KafkaTracer {
     /** Suppresses all consumer-side `process` spans.
       */
     final def withoutProcessSpans: Config =
-      withProcessSpanSetup(_ => None)
+      withProcessSpanSetup(_ => None).withBatchProcessSpanSetup(_ => None)
 
     /** Suppresses all consumer-side `commit` / `settle` spans.
       */
@@ -182,6 +191,9 @@ object KafkaTracer {
 
       val processSpanSetup: ProcessSpanContext => Option[SpanSetup.Process] =
         ctx => Some(SpanSetup.Process("process", Some(ctx.topic)))
+
+      val batchProcessSpanSetup: BatchProcessSpanContext => Option[SpanSetup.Process] =
+        ctx => Some(SpanSetup.Process("process", if (ctx.topics.size == 1) Some(ctx.topics.head) else None))
 
       val commitSpanSetup: CommitSpanContext => Option[SpanSetup.Commit] =
         ctx => Some(SpanSetup.Commit("commit", Option.when(ctx.topics.size == 1)(ctx.topics.head)))
@@ -315,6 +327,7 @@ object KafkaTracer {
         sendSpanSetup = Defaults.sendSpanSetup,
         receiveSpanSetup = Defaults.receiveSpanSetup,
         processSpanSetup = Defaults.processSpanSetup,
+        batchProcessSpanSetup = Defaults.batchProcessSpanSetup,
         commitSpanSetup = Defaults.commitSpanSetup,
       )
 
@@ -325,6 +338,7 @@ object KafkaTracer {
         sendSpanSetup: SendSpanContext => Option[Config.SpanSetup.Send],
         receiveSpanSetup: ReceiveSpanContext => Option[Config.SpanSetup.Receive],
         processSpanSetup: ProcessSpanContext => Option[Config.SpanSetup.Process],
+        batchProcessSpanSetup: BatchProcessSpanContext => Option[Config.SpanSetup.Process],
         commitSpanSetup: CommitSpanContext => Option[Config.SpanSetup.Commit],
     ) extends Config {
 
@@ -345,6 +359,10 @@ object KafkaTracer {
 
       override def withProcessSpanSetup(f: ProcessSpanContext => Option[Config.SpanSetup.Process]): Config =
         copy(processSpanSetup = f)
+
+      override def withBatchProcessSpanSetup(
+          f: BatchProcessSpanContext => Option[Config.SpanSetup.Process]
+      ): Config = copy(batchProcessSpanSetup = f)
 
       override def withCommitSpanSetup(f: CommitSpanContext => Option[Config.SpanSetup.Commit]): Config =
         copy(commitSpanSetup = f)

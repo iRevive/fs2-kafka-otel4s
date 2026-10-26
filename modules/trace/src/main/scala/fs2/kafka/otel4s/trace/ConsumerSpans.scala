@@ -29,24 +29,146 @@ import scala.util.chaining._
 
 /** Configured consumer tracing operations independent of a live Kafka consumer.
   *
-  * Each operation uses the corresponding setup function and attributes in [[KafkaTracer.Config]]. Returning `None`
-  * suppresses the span while still evaluating the supplied effect. A noop tracer also evaluates effects directly and
-  * performs no propagation. Empty receive chunks evaluate the effect without creating a span. Process spans remain
-  * roots linked to recognized contexts from the record headers; receive spans remain roots linked to contexts from each
-  * record in the chunk.
+  * Operations use the [[KafkaTracer.Config]] supplied when creating the owning [[KafkaTracer]]:
+  *
+  *   - [[KafkaTracer.Config.withProcessSpanSetup]] configures both single-record `process` overloads.
+  *   - [[KafkaTracer.Config.withBatchProcessSpanSetup]] configures `processBatch`, including singleton batches,
+  *     independently of single-record setup.
+  *   - [[KafkaTracer.Config.withReceiveSpanSetup]] configures both `receive` and `receiveCommittable`.
+  *
+  * Each setup function receives operation metadata and can choose the span name, attributes, and finalization strategy.
+  * Returning `None` skips span creation and link extraction while still evaluating the supplied effect. Metadata is
+  * resolved before setup is evaluated. [[KafkaTracer.Config.withoutProcessSpans]] suppresses both single-record and
+  * batch process spans; [[KafkaTracer.Config.withoutReceiveSpans]] suppresses both receive operations. A later setup
+  * configuration replaces the corresponding hook and can re-enable that operation.
+  *
+  * Attributes are applied in order: derived semantic attributes, constant attributes configured with
+  * [[KafkaTracer.Config.withConstAttributes]] or [[KafkaTracer.Config.addConstAttributes]], then setup attributes.
+  * Later values override earlier values with the same key. [[KafkaTracer.Config.withServerAddress]] contributes
+  * constant broker address attributes. Attribute overrides do not change the metadata passed to setup functions.
+  *
+  * Setup functions do not change span kind, parenting, or links. Process spans remain consumer roots linked to
+  * recognized contexts from record headers; receive spans remain client roots linked to contexts from each record in
+  * the chunk. [[KafkaTracer.Config.withBatchSpanMode]] controls producer batches and does not affect `processBatch`.
+  * Send and commit setup options do not affect these operations; these methods do not publish records or commit
+  * offsets.
+  *
+  * Empty receive and process batches evaluate the effect without metadata lookup, setup evaluation, or span creation.
+  * Handles obtained from [[KafkaTracer.noop]] also evaluate effects directly, without metadata lookup or propagation.
   */
 sealed trait ConsumerSpans[F[_]] {
 
-  /** Evaluates `fa` with process tracing configured for this record. */
+  /** Evaluates `fa` with single-record tracing from [[KafkaTracer.Config.withProcessSpanSetup]].
+    *
+    * With the corresponding span enabled:
+    * {{{
+    * Input record: m1
+    *
+    *                          time -->
+    *                     +--------------------------+
+    * effect              |            fa            |
+    *                     +--------------------------+
+    *
+    * Span lifetime                                     Controlled by
+    * ------------------------------------------------  -------------------------
+    * > process (m1)      [=========================]   withProcessSpanSetup
+    *
+    * No automatic commit.
+    * }}}
+    *
+    * Returning `None` from the setup function removes the span row; `fa` still runs.
+    */
   def process[K: KafkaMessageKey, V, A](record: ConsumerRecord[K, V])(fa: F[A]): F[A]
 
-  /** Evaluates `fa` with process tracing configured for this committable record. */
+  /** Uses the same single-record setup as `process(record.record)(fa)`; does not commit the record's offset.
+    *
+    * With the corresponding span enabled:
+    * {{{
+    * Input record: m1 (committable)
+    *
+    *                          time -->
+    *                     +--------------------------+
+    * effect              |            fa            |
+    *                     +--------------------------+
+    *
+    * Span lifetime                                     Controlled by
+    * ------------------------------------------------  -------------------------
+    * > process (m1)      [=========================]   withProcessSpanSetup
+    *
+    * No automatic commit.
+    * }}}
+    *
+    * Returning `None` from the setup function removes the span row; `fa` still runs.
+    */
   def process[K: KafkaMessageKey, V, A](record: CommittableConsumerRecord[F, K, V])(fa: F[A]): F[A]
 
-  /** Evaluates `fa` with receive tracing configured for this chunk of plain records. */
+  /** Evaluates `fa` inside one root process span linked to every recognized context in the chunk.
+    *
+    * Empty chunks evaluate `fa` directly without metadata lookup or span setup. Nonempty chunks use
+    * [[KafkaTracer.Config.withBatchProcessSpanSetup]], independently of single-record process setup.
+    *
+    * With the corresponding span enabled and nonempty input:
+    * {{{
+    * Input chunk: [m1, m2, m3]
+    *
+    *                          time -->
+    *                     +--------------------------+
+    * effect              |            fa            |
+    *                     +--------------------------+
+    *
+    * Span lifetime                                     Controlled by
+    * ------------------------------------------------  -------------------------
+    * > process batch     [=========================]   withBatchProcessSpanSetup
+    *
+    * No automatic commit.
+    * }}}
+    *
+    * Returning `None` from the setup function removes the span row; `fa` still runs.
+    */
+  def processBatch[K: KafkaMessageKey, V, A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A]
+
+  /** Evaluates `fa` with receive tracing from [[KafkaTracer.Config.withReceiveSpanSetup]].
+    *
+    * With the corresponding span enabled and nonempty input:
+    * {{{
+    * Input chunk: [m1, m2, m3]
+    *
+    *                          time -->
+    *                     +--------------------------+
+    * effect              |            fa            |
+    *                     +--------------------------+
+    *
+    * Span lifetime                                     Controlled by
+    * ------------------------------------------------  -------------------------
+    * > receive           [=========================]   withReceiveSpanSetup
+    *
+    * No automatic processing or commit is added.
+    * }}}
+    *
+    * Returning `None` from the setup function removes the span row; `fa` still runs.
+    */
   def receive[K: KafkaMessageKey, V, A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A]
 
-  /** Evaluates `fa` with receive tracing configured for this chunk of committable records. */
+  /** Uses the same receive setup as `receive(records.map(_.record))(fa)`; does not commit offsets.
+    *
+    * With the corresponding span enabled and nonempty input:
+    * {{{
+    * Input chunk: [m1, m2, m3] (committable)
+    *
+    *                          time -->
+    *                     +--------------------------+
+    * effect              |            fa            |
+    *                     +--------------------------+
+    *
+    * Span lifetime                                     Controlled by
+    * ------------------------------------------------  -------------------------
+    * > receive           [=========================]   withReceiveSpanSetup
+    *
+    * No automatic processing or commit is added.
+    * }}}
+    *
+    * Returning `None` from the setup function removes the span row; `fa` still runs.
+    */
   def receiveCommittable[K: KafkaMessageKey, V, A](records: Chunk[CommittableConsumerRecord[F, K, V]])(fa: F[A]): F[A]
 
 }
@@ -65,6 +187,7 @@ private[trace] object ConsumerSpans {
   private final class Noop[F[_]] extends ConsumerSpans[F] {
     override def process[K: KafkaMessageKey, V, A](record: ConsumerRecord[K, V])(fa: F[A]): F[A] = fa
     override def process[K: KafkaMessageKey, V, A](record: CommittableConsumerRecord[F, K, V])(fa: F[A]): F[A] = fa
+    override def processBatch[K: KafkaMessageKey, V, A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A] = fa
     override def receive[K: KafkaMessageKey, V, A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A] = fa
     override def receiveCommittable[K: KafkaMessageKey, V, A](
         records: Chunk[CommittableConsumerRecord[F, K, V]]
@@ -123,6 +246,30 @@ private[trace] object ConsumerSpans {
           }
         }
       }
+
+    override def processBatch[K: KafkaMessageKey, V, A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A] =
+      if (records.isEmpty) fa
+      else
+        metadata.get.flatMap { resolved =>
+          val context = Semconv.batchProcessSpanContext(records, resolved.clientId, resolved.groupId)
+          config.batchProcessSpanSetup(context).fold(fa) { setup =>
+            recordTraceContextLinks(records.toList).flatMap { links =>
+              Tracer[F]
+                .spanBuilder(setup.spanName)
+                .root
+                .withSpanKind(SpanKind.Consumer)
+                .withFinalizationStrategy(setup.finalizationStrategy)
+                .addAttributes(
+                  Semconv.batchProcessAttributes(context, records) ++ config.constAttributes ++ setup.attributes
+                )
+                .pipe { builder =>
+                  links.foldLeft(builder) { case (acc, (context, attributes)) => acc.addLink(context, attributes) }
+                }
+                .build
+                .surround(fa)
+            }
+          }
+        }
 
     override def process[K: KafkaMessageKey, V, A](record: CommittableConsumerRecord[F, K, V])(fa: F[A]): F[A] =
       process(record.record)(fa)

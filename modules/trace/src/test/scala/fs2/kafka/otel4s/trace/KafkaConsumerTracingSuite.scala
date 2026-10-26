@@ -16,10 +16,11 @@
 
 package fs2.kafka.otel4s.trace
 
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref}
 import fs2.Chunk
 import fs2.kafka._
 import fs2.kafka.consumer.KafkaConsumeChunk.CommitNow
+import org.typelevel.otel4s.oteljava.testkit.AttributesExpectation
 import org.typelevel.otel4s.Attributes
 import org.typelevel.otel4s.oteljava.testkit.trace._
 import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
@@ -128,6 +129,87 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
           }
         } yield ()
       }
+  }
+
+  test("consumeChunkTraced uses one batch process span for the whole callback chunk") {
+    KafkaTracerTestkit.create().use { testkit =>
+      val records = List(
+        ConsumerRecord("topic", 0, 1L, "k1", "v1"),
+        ConsumerRecord("topic", 0, 2L, "k2", "v2")
+      )
+      for {
+        callbacks <- Ref[IO].of(0)
+        consumer <- IO.pure(
+          StubKafkaConsumer.streaming(records.map(StubKafkaConsumer.committableRecord(_)))
+        )
+        traced <- testkit.tracedConsumer[String, String](consumer)
+        _ <- traced.consumeChunkTraced { chunk =>
+          callbacks.update(_ + 1) *> IO(assertEquals(chunk.size, 2)).as(CommitNow)
+        }.attempt
+        callbackCount <- callbacks.get
+        spans <- testkit.finishedSpans
+      } yield {
+        assertEquals(callbackCount, 1)
+        assertExpected(
+          spans,
+          TraceForestExpectation.unordered(
+            root(SpanExpectation.client("poll topic").scopeName("fs2.kafka")),
+            root(
+              SpanExpectation
+                .consumer("process topic")
+                .scopeName("fs2.kafka")
+                .attributes(AttributesExpectation.where("batch count is two and offset is absent") { attributes =>
+                  AttributesExpectation
+                    .subset(
+                      Attributes(
+                        MessagingExperimentalAttributes.MessagingBatchMessageCount(2L)
+                      )
+                    )
+                    .matches(attributes) && attributes.get[Long]("messaging.kafka.offset").isEmpty
+                })
+            ),
+            root(SpanExpectation.client("commit topic").scopeName("fs2.kafka"))
+          )
+        )
+      }
+    }
+  }
+
+  test("consumeChunkTraced skips owned commits when the batch callback errors or is canceled") {
+    KafkaTracerTestkit.create().use { testkit =>
+      val record = ConsumerRecord("topic", 0, 1L, "key", "value")
+      val failure = new RuntimeException("batch failed")
+      for {
+        errorCommits <- Ref[IO].of(0)
+        errorConsumer = StubKafkaConsumer.streaming(List(committableRecord(record, errorCommits)))
+        errorTraced <- testkit.tracedConsumer[String, String](errorConsumer)
+        error <- errorTraced.consumeChunkTraced(_ => IO.raiseError[CommitNow.type](failure)).attempt
+        commitsAfterError <- errorCommits.get
+        cancelCommits <- Ref[IO].of(0)
+        cancelConsumer = StubKafkaConsumer.streaming(List(committableRecord(record, cancelCommits)))
+        cancelTraced <- testkit.tracedConsumer[String, String](cancelConsumer)
+        started <- Deferred[IO, Unit]
+        gate <- Deferred[IO, Unit]
+        fiber <- cancelTraced.consumeChunkTraced(_ => started.complete(()) *> gate.get.as(CommitNow)).start
+        _ <- started.get
+        _ <- fiber.cancel
+        commitsAfterCancel <- cancelCommits.get
+        finished <- testkit.finishedSpans
+      } yield {
+        assertEquals(error, Left(failure))
+        assertEquals(commitsAfterError, 0)
+        assertEquals(commitsAfterCancel, 0)
+        assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(SpanExpectation.client("poll topic").scopeName("fs2.kafka").status(StatusExpectation.error)),
+            root(SpanExpectation.consumer("process topic").scopeName("fs2.kafka").status(StatusExpectation.error)),
+            root(SpanExpectation.client("poll topic").scopeName("fs2.kafka").status(StatusExpectation.error)),
+            root(SpanExpectation.consumer("process topic").scopeName("fs2.kafka").status(StatusExpectation.error))
+          )
+        )
+      }
+    }
   }
 
   test("consumeChunkTraced(chunk) can disable delivery and commit spans") {
