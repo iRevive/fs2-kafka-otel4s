@@ -17,20 +17,13 @@
 package fs2.kafka.otel4s.trace
 
 import cats.{Applicative, Parallel}
-import cats.effect.syntax.all._
-import cats.effect.{MonadCancelThrow, Outcome, Resource}
+import cats.effect.{MonadCancelThrow, Resource}
 import cats.syntax.all._
 import fs2.Chunk
 import fs2.kafka._
-import fs2.kafka.otel4s.trace.instances._
-import fs2.kafka.otel4s.trace.internal.{KafkaClientId, Semconv}
-import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.consumer.{ConsumerGroupMetadata, OffsetAndMetadata}
 import org.apache.kafka.common.{Metric, MetricName, PartitionInfo, TopicPartition}
-import org.typelevel.otel4s.Attributes
 import org.typelevel.otel4s.trace._
-
-import scala.util.chaining._
 
 /** A tracing handle bound to a specific [[fs2.kafka.KafkaProducer]].
   *
@@ -47,6 +40,9 @@ import scala.util.chaining._
   * `producer.produce(records).flatten`.
   */
 trait TracedKafkaProducer[F[_], K, V] extends KafkaProducer.WithSettings[F, K, V] {
+
+  /** Configured operations using this producer's metadata, reusable with a caller-owned send boundary. */
+  def spans: ProducerSpans[F]
 
   /** Injects the current tracing context into the headers of a single record without producing it.
     *
@@ -150,88 +146,17 @@ object TracedKafkaProducer {
       config: KafkaTracer.Config,
   ) extends TracedKafkaProducer[F, K, V] {
 
-    private val clientId =
-      KafkaClientId[F](
-        underlying.settings.properties.get(CommonClientConfigs.CLIENT_ID_CONFIG),
-        underlying.metrics
-      )
+    override val spans: ProducerSpans.Impl[F] =
+      ProducerSpans[F](ProducerMetadata.Provider.fromProducer(underlying), config)
 
     override def injectHeaders(record: ProducerRecord[K, V]): F[ProducerRecord[K, V]] =
-      Tracer[F]
-        .joinOrRoot(record.headers)(Tracer[F].currentSpanContext)
-        .flatMap {
-          // if the record headers already have propagated span details, we don't need to inject anything
-          case Some(_) =>
-            MonadCancelThrow[F].pure(record)
-
-          case None =>
-            Tracer[F].propagate(record.headers).map(record.withHeaders)
-        }
+      spans.injectHeaders(record)
 
     override def injectHeaders(records: ProducerRecords[K, V]): F[ProducerRecords[K, V]] =
-      records.traverse(injectHeaders)
+      spans.injectHeaders(records)
 
     override def produce(records: ProducerRecords[K, V]): F[F[ProducerResult[K, V]]] =
-      if (records.isEmpty) {
-        underlying.produce(records)
-      } else {
-        clientId.get.flatMap { clientId =>
-          prepareBatch(records, clientId).use { prepared =>
-            val spanContext = Semconv.sendSpanContext(prepared.records, clientId)
-            val spanSetup = config.sendSpanSetup(spanContext)
-
-            spanSetup.fold(producePrepared(prepared)) { setup =>
-              val span = Tracer[F]
-                .spanBuilder(setup.spanName)
-                .withSpanKind(prepared.sendKind)
-                .withFinalizationStrategy(setup.finalizationStrategy)
-                .addAttributes(
-                  Semconv.sendAttributes(spanContext, prepared.records) ++
-                    config.constAttributes ++
-                    setup.attributes
-                )
-                .pipe { builder =>
-                  prepared.sendLinks.foldLeft(builder) { case (acc, (ctx, attributes)) =>
-                    acc.addLink(ctx, attributes)
-                  }
-                }
-                .build
-
-              MonadCancelThrow[F].uncancelable { poll =>
-                span.resource.allocatedCase
-                  .flatMap { case (res, release) =>
-                    poll(res.trace(producePrepared(prepared)))
-                      .guaranteeCase {
-                        case Outcome.Succeeded(_) => MonadCancelThrow[F].unit
-                        case Outcome.Errored(e)   => release(Resource.ExitCase.Errored(e))
-                        case Outcome.Canceled()   => release(Resource.ExitCase.Canceled)
-                      }
-                      .map { awaitResult =>
-                        res
-                          .trace(awaitResult)
-                          .flatTap { result =>
-                            res.span.addAttributes(Semconv.sendResultAttributes(result))
-                          }
-                          .guaranteeCase {
-                            case Outcome.Succeeded(_) => release(Resource.ExitCase.Succeeded)
-                            case Outcome.Errored(e)   => release(Resource.ExitCase.Errored(e))
-                            case Outcome.Canceled()   => release(Resource.ExitCase.Canceled)
-                          }
-                      }
-                  }
-              }
-            }
-          }
-        }
-      }
-
-    private def producePrepared(prepared: PreparedBatch): F[F[ProducerResult[K, V]]] =
-      if (prepared.injectSendSpanContext)
-        prepared.records
-          .traverse(record => injectHeaders(record))
-          .flatMap(record => underlying.produce(record))
-      else
-        underlying.produce(prepared.records)
+      spans.produce(records)(underlying.produce)
 
     override def produceAndCommitTransactionally(
         records: TransactionalProducerRecords[F, K, V]
@@ -326,98 +251,12 @@ object TracedKafkaProducer {
         config
       )
 
-    /** @param needsSendSpanContextInjection - whether this record needs the eventual `send` span's trace context injected.
-      *
-      * `true` means the record has no recognized trace context and no dedicated `create` span was synthesized.
-      *
-      * `false` means the record headers already contain trace context, either from the caller or from a synthesized
-      * `create` span during batch preparation.
-      */
-    private case class PreparedRecord(
-        record: ProducerRecord[K, V],
-        needsSendSpanContextInjection: Boolean,
-        sendLink: Option[(SpanContext, Attributes)]
-    )
-
-    private case class PreparedBatch(
-        records: ProducerRecords[K, V],
-        sendKind: SpanKind,
-        sendLinks: List[(SpanContext, Attributes)],
-        injectSendSpanContext: Boolean
-    )
-
-    private def prepareRecord(
-        record: ProducerRecord[K, V],
-        createRecordSpan: Boolean,
-        clientId: Option[String]
-    ): Resource[F, PreparedRecord] =
-      Resource
-        .eval(Tracer[F].joinOrRoot(record.headers)(Tracer[F].currentSpanContext))
-        .flatMap {
-          case Some(ctx) =>
-            Resource.pure(
-              PreparedRecord(
-                record = record,
-                needsSendSpanContextInjection = false,
-                sendLink = Some(ctx -> Semconv.sendLinkAttributes(record))
-              )
-            )
-
-          case None if createRecordSpan =>
-            Tracer[F]
-              .spanBuilder(Semconv.createSpanName(record.topic))
-              .withSpanKind(SpanKind.Producer)
-              .addAttributes(
-                Semconv.createAttributes(record, clientId) ++ config.constAttributes
-              )
-              .build
-              .resource
-              .evalMap { res =>
-                res
-                  .trace(injectHeaders(record))
-                  .map { injected =>
-                    PreparedRecord(
-                      record = injected,
-                      needsSendSpanContextInjection = false,
-                      sendLink = Some(res.span.context -> Semconv.sendLinkAttributes(record))
-                    )
-                  }
-              }
-
-          case None =>
-            Resource.pure(
-              PreparedRecord(
-                record = record,
-                needsSendSpanContextInjection = true,
-                sendLink = None
-              )
-            )
-        }
-
-    private def prepareBatch(
-        records: ProducerRecords[K, V],
-        clientId: Option[String]
-    ): Resource[F, PreparedBatch] = {
-      val useCreateSpans =
-        records.size > 1 && config.batchSpanMode == BatchSpanMode.PerRecordSpans
-
-      records.toList
-        .traverse(prepareRecord(_, useCreateSpans, clientId))
-        .map { prepared =>
-          val injectSendSpanContext = prepared.exists(_.needsSendSpanContextInjection)
-
-          PreparedBatch(
-            records = ProducerRecords(prepared.map(_.record)),
-            sendKind = if (injectSendSpanContext) SpanKind.Producer else SpanKind.Client,
-            sendLinks = prepared.flatMap(_.sendLink),
-            injectSendSpanContext = injectSendSpanContext
-          )
-        }
-    }
   }
 
   final private class Noop[F[_]: Applicative, K, V](underlying: KafkaProducer.WithSettings[F, K, V])
       extends TracedKafkaProducer[F, K, V] {
+
+    override val spans: ProducerSpans[F] = ProducerSpans.noop[F]
 
     override def injectHeaders(record: ProducerRecord[K, V]): F[ProducerRecord[K, V]] =
       Applicative[F].pure(record)

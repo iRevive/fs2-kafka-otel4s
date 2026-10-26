@@ -139,6 +139,34 @@ All producer spans use the ambient current span as their normal parent. A contex
 
 See [Producer instrumentation](docs/producer-instrumentation.md) for the complete span matrix, attributes, lifecycle, error behavior, and transactional details.
 
+For frameworks that own their producer, use `ProducerSpans` with explicit metadata and a send callback:
+
+```scala
+import fs2.kafka.otel4s.trace.ProducerMetadata
+
+def sendWithTracing(
+    kafkaTracer: KafkaTracer[IO],
+    records: ProducerRecords[String, String],
+    send: ProducerRecords[String, String] => IO[IO[ProducerResult[String, String]]]
+): IO[ProducerResult[String, String]] = {
+  val spans = kafkaTracer.producerSpans(
+    ProducerMetadata.Provider.constant[IO](ProducerMetadata(Some("orders-producer")))
+  )
+  spans.produce(records)(send).flatten
+}
+```
+
+The callback must publish the prepared records it receives, including their injected headers. The outer effect submits
+records; the returned acknowledgment effect waits for completion and finalizes the send span. Always evaluate both
+stages. Abandoning the acknowledgment effect leaves the span open. A single handle accepts different key and value
+types at each call. Configuration applies equally to this API and the producer adapter.
+
+`tracedProducer.spans` exposes operations using the bound producer's metadata provider. Use
+`ProducerMetadata.Provider.fromProducer` to derive metadata from another live producer, or `constant` for a snapshot
+that retains no client. Generated client IDs are resolved lazily from metrics and cached, including a missing value
+after lookup failure. Transactions remain the responsibility of the adapter or the calling framework.
+
+
 The syntax import lets you bind tracing at the stream boundary and keep the rest of the producer API unchanged:
 
 ```scala
