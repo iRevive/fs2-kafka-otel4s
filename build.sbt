@@ -1,3 +1,5 @@
+import laika.helium.config.TextLink
+
 ThisBuild / tlBaseVersion := "0.3"
 
 ThisBuild / organization := "io.github.irevive"
@@ -14,7 +16,29 @@ ThisBuild / scalaVersion := Scala213 // the default Scala
 
 ThisBuild / tlCiDependencyGraphJob := false
 
+ThisBuild / tlSitePublishBranch := Some("main")
+ThisBuild / tlSitePublishTags := false
+
 ThisBuild / githubWorkflowJavaVersions := Seq(JavaSpec.temurin("17"))
+
+ThisBuild / githubWorkflowAddedJobs += WorkflowJob(
+  id = "docs-configurator",
+  name = "Test documentation configurator",
+  steps = List(
+    WorkflowStep.Checkout,
+    WorkflowStep.Use(
+      UseRef.Public("actions", "setup-node", "v6"),
+      name = Some("Setup Node.js"),
+      params = Map("node-version" -> "24")
+    ),
+    WorkflowStep.Run(
+      List("node --test tests/site/*.test.cjs"),
+      name = Some("Check configurator behavior")
+    )
+  ),
+  scalas = Nil,
+  javas = Nil,
+)
 
 lazy val Versions = new {
   val fs2kafka = "4.1.0"
@@ -33,7 +57,7 @@ lazy val munitDependencies = Def.settings(
 
 lazy val root = tlCrossRootProject.aggregate(
   trace,
-  docs,
+  site,
 )
 
 lazy val trace = project
@@ -56,14 +80,29 @@ lazy val trace = project
     )
   )
 
-lazy val docs = project
-  .in(file("modules/docs"))
-  .enablePlugins(MdocPlugin, NoPublishPlugin)
+lazy val site = project
+  .in(file("modules/site"))
+  .enablePlugins(TypelevelSitePlugin)
   .settings(
-    mdocIn := file("docs/index.md"),
-    mdocOut := file("README.md"),
-    mdocVariables := Map(
-      "VERSION" -> version.value
-    ),
+    mdocIn := file("docs"),
+    mdocOut := target.value / "mdoc",
+    mdocVariables := Map("VERSION" -> version.value),
+    laikaConfig := LaikaConfig.defaults.withRawContent,
+    tlSiteHelium := tlSiteHelium.value.all
+      .metadata(title = Some("fs2-kafka-otel4s"), language = Some("en"))
+      .site
+      .topNavigationBar(
+        homeLink = TextLink.internal(laika.ast.Path.Root / "index.md", "fs2-kafka-otel4s")
+      )
+      .site
+      .internalCSS(laika.ast.Path.Root / "site.css")
+      .site
+      .internalCSS(laika.ast.Path.Root / "assets" / "tracing-explorer.css")
+      .site
+      .internalJS(laika.ast.Path.Root / "assets" / "tracing-explorer.js")
+      .site
+      .internalJS(laika.ast.Path.Root / "assets" / "consumer-spans.js")
+      .site
+      .internalJS(laika.ast.Path.Root / "assets" / "producer-spans.js"),
   )
   .dependsOn(trace)
