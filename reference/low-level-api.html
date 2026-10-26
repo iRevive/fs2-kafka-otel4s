@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+  
+  <head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="generator" content="Typelevel Laika + Helium Theme" />
+  <title>Low-level API</title>
+  
+  <meta name="author" content="Maksym Ochenashko"/>
+  
+  <meta name="author" content="Maksym Ochenashko"/>
+  
+  
+  <meta name="description" content="site"/>
+  
+  
+  
+  
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Lato:400,700">
+  
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Fira+Mono:500">
+  
+  <link rel="stylesheet" type="text/css" href="../helium/site/icofont.min.css" />
+    <link rel="stylesheet" type="text/css" href="../helium/site/laika-helium.css" />
+    <link rel="stylesheet" type="text/css" href="../site.css" />
+    <link rel="stylesheet" type="text/css" href="../assets/tracing-explorer.css" />
+  <script src="../helium/site/laika-helium.js"></script>
+    <script src="../assets/tracing-explorer.js"></script>
+    <script src="../assets/consumer-spans.js"></script>
+    <script src="../assets/producer-spans.js"></script>
+  
+  
+  <script> /* for avoiding page load transitions */ </script>
+</head>
+
+  <body>
+
+    <header id="top-bar" class="light-default dark-default">
+
+  <div class="row">
+    <a id="nav-icon">
+      <i class="icofont-laika navigationMenu" title="Navigation">&#xefa2;</i>
+    </a>
+    
+    
+  </div>
+
+  <a class="text-link" href="../">fs2-kafka-otel4s</a>
+
+  <div class="row links">
+    
+    <a class="icon-link svg-link" href="https://github.com/iRevive/fs2-kafka-otel4s"><span class="github" title="Source Code"><svg class="svg-icon" width="100%" height="100%" viewBox="0 0 100 100" version="1.1" xmlns="http://www.w3.org/2000/svg" xml:space="preserve" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+  <g class="svg-shape">
+    <path d="M49.995,1c-27.609,-0 -49.995,22.386 -49.995,50.002c-0,22.09 14.325,40.83 34.194,47.444c2.501,0.458 3.413,-1.086 3.413,-2.412c0,-1.185 -0.043,-4.331 -0.067,-8.503c-13.908,3.021 -16.843,-6.704 -16.843,-6.704c-2.274,-5.773 -5.552,-7.311 -5.552,-7.311c-4.54,-3.103 0.344,-3.042 0.344,-3.042c5.018,0.356 7.658,5.154 7.658,5.154c4.46,7.64 11.704,5.433 14.552,4.156c0.454,-3.232 1.744,-5.436 3.174,-6.685c-11.102,-1.262 -22.775,-5.553 -22.775,-24.713c-0,-5.457 1.949,-9.92 5.147,-13.416c-0.516,-1.265 -2.231,-6.348 0.488,-13.233c0,0 4.199,-1.344 13.751,5.126c3.988,-1.108 8.266,-1.663 12.518,-1.682c4.245,0.019 8.523,0.574 12.517,1.682c9.546,-6.47 13.736,-5.126 13.736,-5.126c2.728,6.885 1.013,11.968 0.497,13.233c3.204,3.496 5.141,7.959 5.141,13.416c0,19.209 -11.691,23.436 -22.83,24.673c1.795,1.544 3.394,4.595 3.394,9.26c0,6.682 -0.061,12.076 -0.061,13.715c0,1.338 0.899,2.894 3.438,2.406c19.853,-6.627 34.166,-25.354 34.166,-47.438c-0,-27.616 -22.389,-50.002 -50.005,-50.002"/>
+  </g>
+</svg></span></a>
+    
+  </div>  
+
+</header>
+    
+    <nav id="sidebar">
+
+  <div class="row">
+    
+    <a class="icon-link svg-link" href="https://github.com/iRevive/fs2-kafka-otel4s"><span class="github" title="Source Code"><svg class="svg-icon" width="100%" height="100%" viewBox="0 0 100 100" version="1.1" xmlns="http://www.w3.org/2000/svg" xml:space="preserve" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+  <g class="svg-shape">
+    <path d="M49.995,1c-27.609,-0 -49.995,22.386 -49.995,50.002c-0,22.09 14.325,40.83 34.194,47.444c2.501,0.458 3.413,-1.086 3.413,-2.412c0,-1.185 -0.043,-4.331 -0.067,-8.503c-13.908,3.021 -16.843,-6.704 -16.843,-6.704c-2.274,-5.773 -5.552,-7.311 -5.552,-7.311c-4.54,-3.103 0.344,-3.042 0.344,-3.042c5.018,0.356 7.658,5.154 7.658,5.154c4.46,7.64 11.704,5.433 14.552,4.156c0.454,-3.232 1.744,-5.436 3.174,-6.685c-11.102,-1.262 -22.775,-5.553 -22.775,-24.713c-0,-5.457 1.949,-9.92 5.147,-13.416c-0.516,-1.265 -2.231,-6.348 0.488,-13.233c0,0 4.199,-1.344 13.751,5.126c3.988,-1.108 8.266,-1.663 12.518,-1.682c4.245,0.019 8.523,0.574 12.517,1.682c9.546,-6.47 13.736,-5.126 13.736,-5.126c2.728,6.885 1.013,11.968 0.497,13.233c3.204,3.496 5.141,7.959 5.141,13.416c0,19.209 -11.691,23.436 -22.83,24.673c1.795,1.544 3.394,4.595 3.394,9.26c0,6.682 -0.061,12.076 -0.061,13.715c0,1.338 0.899,2.894 3.438,2.406c19.853,-6.627 34.166,-25.354 34.166,-47.438c-0,-27.616 -22.389,-50.002 -50.005,-50.002"/>
+  </g>
+</svg></span></a>
+    
+  </div>
+
+  <ul class="nav-list">
+    <li class="level1 nav-leaf"><a href="../">fs2-kafka-otel4s</a></li>
+    <li class="level1 nav-header">Getting started</li>
+    <li class="level2 nav-leaf"><a href="../getting-started/consumers.html">Consumers</a></li>
+    <li class="level2 nav-leaf"><a href="../getting-started/producers.html">Producers</a></li>
+    <li class="level2 nav-leaf"><a href="../getting-started/configuration.html">Configuration</a></li>
+    <li class="level1 nav-header">Interactive guides</li>
+    <li class="level2 nav-leaf"><a href="../interactive-guides/consumer-tracing.html">Consumer tracing configurator</a></li>
+    <li class="level2 nav-leaf"><a href="../interactive-guides/producer-tracing.html">Producer tracing configurator</a></li>
+    <li class="level1 nav-header">API reference</li>
+    <li class="level2 active nav-leaf"><a href="#">Low-level API</a></li>
+    <li class="level2 nav-leaf"><a href="producer-instrumentation.html">Producer instrumentation</a></li>
+    <li class="level1 nav-header">Project documentation</li>
+    <li class="level2 nav-leaf"><a href="../project/compliance-matrix.html">Compliance Matrix</a></li>
+  </ul>
+
+</nav>
+
+    <div id="container">
+
+      
+<nav id="page-nav">
+  <p class="header"><a href="#">Low-level API</a></p>
+
+  <ul class="nav-list">
+    <li class="level1 nav-leaf"><a href="#consumer-operations-without-a-client">Consumer operations without a client</a></li>
+    <li class="level1 nav-leaf"><a href="#bound-consumer-operations">Bound consumer operations</a></li>
+    <li class="level1 nav-leaf"><a href="#offset-only-commits">Offset-only commits</a></li>
+    <li class="level1 nav-leaf"><a href="#producer-operations-without-a-client">Producer operations without a client</a></li>
+  </ul>
+
+  <p class="footer"></p>
+</nav>
+
+
+      <main class="content">
+
+        <h1 id="low-level-api" class="title">Low-level API</h1>
+        <p>Use operation handles to choose where tracing starts and ends in your own Kafka loop.
+        They use the same configuration as the consumer and producer adapters. No tracing syntax import is needed.</p>
+        
+        <h2 id="consumer-operations-without-a-client" class="section"><a class="anchor-link left" href="#consumer-operations-without-a-client"><i class="icofont-laika link">&#xef71;</i></a>Consumer operations without a client</h2>
+        <p>Supply metadata directly to trace a batch without a Kafka client:</p>
+        <pre><code class="nohighlight"><span class="keyword">import</span><span> </span><span class="identifier">cats</span><span>.</span><span class="identifier">effect</span><span>.</span><span class="type-name">IO</span><span>
+</span><span class="keyword">import</span><span> </span><span class="identifier">fs2</span><span>.</span><span class="type-name">Chunk</span><span>
+</span><span class="keyword">import</span><span> </span><span class="identifier">fs2</span><span>.</span><span class="identifier">kafka</span><span>.{</span><span class="type-name">ConsumerRecord</span><span>, </span><span class="type-name">ProducerRecords</span><span>, </span><span class="type-name">ProducerResult</span><span>}
+</span><span class="keyword">import</span><span> </span><span class="identifier">fs2</span><span>.</span><span class="identifier">kafka</span><span>.</span><span class="identifier">otel4s</span><span>.</span><span class="identifier">trace</span><span>.</span><span class="type-name">KafkaTracer</span><span>
+</span><span class="keyword">import</span><span> </span><span class="identifier">fs2</span><span>.</span><span class="identifier">kafka</span><span>.</span><span class="identifier">otel4s</span><span>.</span><span class="identifier">trace</span><span>.</span><span class="type-name">ConsumerMetadata</span><span>
+
+</span><span class="keyword">def</span><span> </span><span class="declaration-name">processBatch</span><span>(
+    </span><span class="identifier">records</span><span>: </span><span class="type-name">Chunk</span><span>[</span><span class="type-name">ConsumerRecord</span><span>[</span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>]],
+    </span><span class="identifier">callback</span><span>: </span><span class="type-name">IO</span><span>[</span><span class="type-name">Unit</span><span>]
+)(</span><span class="keyword">implicit</span><span> </span><span class="identifier">kafkaTracer</span><span>: </span><span class="type-name">KafkaTracer</span><span>[</span><span class="type-name">IO</span><span>]): </span><span class="type-name">IO</span><span>[</span><span class="type-name">Unit</span><span>] =
+  </span><span class="identifier">kafkaTracer</span><span>
+    .</span><span class="identifier">consumerSpans</span><span>(</span><span class="type-name">ConsumerMetadata</span><span>.</span><span class="type-name">Provider</span><span>.</span><span class="identifier">constant</span><span>[</span><span class="type-name">IO</span><span>](</span><span class="type-name">ConsumerMetadata</span><span>(</span><span class="type-name">None</span><span>, </span><span class="type-name">None</span><span>)))
+    .</span><span class="identifier">processBatch</span><span>(</span><span class="identifier">records</span><span>)(</span><span class="identifier">callback</span><span>)</span></code></pre>
+        <p>Each <code>ConsumerSpans</code> operation creates one span around your effect. You handle commits:</p>
+        <pre class="keep-together pdf epub"><code class="text">Operation                                   Span created       Controlled by
+------------------------------------------  -----------------  -------------------------
+spans.process(record)(effect)                 process          withProcessSpanSetup
+spans.process(committableRecord)(effect)      process          withProcessSpanSetup
+spans.processBatch(records)(effect)           process batch    withBatchProcessSpanSetup
+spans.receive(records)(effect)                receive          withReceiveSpanSetup
+spans.receiveCommittable(records)(effect)     receive          withReceiveSpanSetup</code></pre>
+        <p>Each span surrounds the supplied effect; none of these operations commits offsets. Empty batch operations run the
+        supplied effect without a span.</p>
+        
+        <h2 id="bound-consumer-operations" class="section"><a class="anchor-link left" href="#bound-consumer-operations"><i class="icofont-laika link">&#xef71;</i></a>Bound consumer operations</h2>
+        <p>When you are already working with chunked or partitioned consumer streams, call the configured operations on
+        <code>tracedConsumer.spans</code>:</p>
+        <pre class="keep-together pdf epub"><code class="nohighlight"><span class="keyword">import</span><span> </span><span class="identifier">fs2</span><span>.</span><span class="identifier">kafka</span><span>.</span><span class="identifier">otel4s</span><span>.</span><span class="identifier">trace</span><span>.</span><span class="type-name">TracedKafkaConsumer</span><span>
+
+</span><span class="keyword">def</span><span> </span><span class="declaration-name">processWithSelectedConsumer</span><span>(
+    </span><span class="identifier">records</span><span>: </span><span class="type-name">Chunk</span><span>[</span><span class="type-name">ConsumerRecord</span><span>[</span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>]],
+    </span><span class="identifier">tracedConsumer</span><span>: </span><span class="type-name">TracedKafkaConsumer</span><span>[</span><span class="type-name">IO</span><span>, </span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>]
+): </span><span class="type-name">IO</span><span>[</span><span class="type-name">Unit</span><span>] =
+  </span><span class="identifier">tracedConsumer</span><span>.</span><span class="identifier">spans</span><span>.</span><span class="identifier">processBatch</span><span>(</span><span class="identifier">records</span><span>)(</span><span class="type-name">IO</span><span>.</span><span class="identifier">println</span><span>(</span><span class="identifier">records</span><span>))</span></code></pre>
+        <p>Use <code>spans.process(record)(effect)</code> for one record. Use <code>spans.receiveCommittable(chunk)(effect)</code>
+        to wrap an effect in a receive span.</p>
+        
+        <h2 id="offset-only-commits" class="section"><a class="anchor-link left" href="#offset-only-commits"><i class="icofont-laika link">&#xef71;</i></a>Offset-only commits</h2>
+        <p>If your app or library commits offsets directly, wrap the commit effect with <code>commitOffsets</code> to trace it:</p>
+        <pre class="keep-together pdf epub"><code class="nohighlight"><span class="keyword">import</span><span> </span><span class="identifier">org</span><span>.</span><span class="identifier">apache</span><span>.</span><span class="identifier">kafka</span><span>.</span><span class="identifier">clients</span><span>.</span><span class="identifier">consumer</span><span>.</span><span class="type-name">OffsetAndMetadata</span><span>
+</span><span class="keyword">import</span><span> </span><span class="identifier">org</span><span>.</span><span class="identifier">apache</span><span>.</span><span class="identifier">kafka</span><span>.</span><span class="identifier">common</span><span>.</span><span class="type-name">TopicPartition</span><span>
+
+</span><span class="keyword">def</span><span> </span><span class="declaration-name">commitOffsets</span><span>(
+    </span><span class="identifier">offsets</span><span>: </span><span class="type-name">Map</span><span>[</span><span class="type-name">TopicPartition</span><span>, </span><span class="type-name">OffsetAndMetadata</span><span>],
+    </span><span class="identifier">underlyingCommit</span><span>: </span><span class="type-name">IO</span><span>[</span><span class="type-name">Unit</span><span>]
+)(</span><span class="keyword">implicit</span><span> </span><span class="identifier">kafkaTracer</span><span>: </span><span class="type-name">KafkaTracer</span><span>[</span><span class="type-name">IO</span><span>]): </span><span class="type-name">IO</span><span>[</span><span class="type-name">Unit</span><span>] =
+  </span><span class="identifier">kafkaTracer</span><span>
+    .</span><span class="identifier">consumerSpans</span><span>(</span><span class="type-name">ConsumerMetadata</span><span>.</span><span class="type-name">Provider</span><span>.</span><span class="identifier">constant</span><span>[</span><span class="type-name">IO</span><span>](</span><span class="type-name">ConsumerMetadata</span><span>(</span><span class="type-name">None</span><span>, </span><span class="type-name">None</span><span>)))
+    .</span><span class="identifier">commitOffsets</span><span>(</span><span class="identifier">offsets</span><span>)(</span><span class="identifier">underlyingCommit</span><span>)</span></code></pre>
+        <p><code>commitOffsets</code> runs <code>underlyingCommit</code> inside a commit span. You supply the actual commit effect. An empty map runs
+        the effect without a span.</p>
+        <p>Commit spans include:</p>
+        <ul>
+          <li>Topics being committed.</li>
+          <li>A partition when the map has exactly one topic-partition entry.</li>
+          <li>The active span as parent, if one exists. Otherwise, the commit span is a root.</li>
+        </ul>
+        <p>Offset-only commits have no record counts, record details, or message links.
+        They use the context active at commit time.</p>
+        <p><code>kafkaTracer.consumerSpans(metadata).commitBatchWithin</code> traces each commit call.
+        The standard <code>fs2.kafka.commitBatchWithin</code> adds no spans.</p>
+        
+        <h2 id="producer-operations-without-a-client" class="section"><a class="anchor-link left" href="#producer-operations-without-a-client"><i class="icofont-laika link">&#xef71;</i></a>Producer operations without a client</h2>
+        <p>For frameworks that own their producer, use <code>ProducerSpans</code> with explicit metadata and a send callback:</p>
+        <pre class="keep-together pdf epub"><code class="nohighlight"><span class="keyword">import</span><span> </span><span class="identifier">fs2</span><span>.</span><span class="identifier">kafka</span><span>.</span><span class="identifier">otel4s</span><span>.</span><span class="identifier">trace</span><span>.</span><span class="type-name">ProducerMetadata</span><span>
+
+</span><span class="keyword">def</span><span> </span><span class="declaration-name">sendWithTracing</span><span>(
+    </span><span class="identifier">kafkaTracer</span><span>: </span><span class="type-name">KafkaTracer</span><span>[</span><span class="type-name">IO</span><span>],
+    </span><span class="identifier">records</span><span>: </span><span class="type-name">ProducerRecords</span><span>[</span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>],
+    </span><span class="identifier">send</span><span>: </span><span class="type-name">ProducerRecords</span><span>[</span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>] =&gt; </span><span class="type-name">IO</span><span>[</span><span class="type-name">IO</span><span>[</span><span class="type-name">ProducerResult</span><span>[</span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>]]]
+): </span><span class="type-name">IO</span><span>[</span><span class="type-name">ProducerResult</span><span>[</span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>]] = {
+  </span><span class="keyword">val</span><span> </span><span class="identifier">spans</span><span> = </span><span class="identifier">kafkaTracer</span><span>.</span><span class="identifier">producerSpans</span><span>(
+    </span><span class="type-name">ProducerMetadata</span><span>.</span><span class="type-name">Provider</span><span>.</span><span class="identifier">constant</span><span>[</span><span class="type-name">IO</span><span>](</span><span class="type-name">ProducerMetadata</span><span>(</span><span class="type-name">Some</span><span>(</span><span class="string-literal">&quot;orders-producer&quot;</span><span>)))
+  )
+  </span><span class="identifier">spans</span><span>.</span><span class="identifier">produce</span><span>(</span><span class="identifier">records</span><span>)(</span><span class="identifier">send</span><span>).</span><span class="identifier">flatten</span><span>
+}</span></code></pre>
+        <p>The callback must publish the records it receives, including injected headers.
+        Use <code>.flatten</code> to submit records and wait for acknowledgment. Skipping acknowledgment leaves the send span open.</p>
+        <p>A handle accepts different key and value types at each call. It uses the same configuration as the producer adapter.
+        You handle transactions.</p>
+        <p><code>tracedProducer.spans</code> uses the bound producer’s metadata. To supply metadata separately, use:</p>
+        <ul>
+          <li><code>Provider.fromProducer</code> to read and cache a live client’s ID. Failed lookups are also cached.</li>
+          <li><code>Provider.constant</code> to store metadata without retaining a client.</li>
+        </ul>
+        <p>See <a href="../getting-started/configuration.html#resource-binding-and-tracer-reuse">Configuration</a> for resource binding, tracer reuse, and metadata-provider lifetimes.</p>
+
+        
+<hr class="footer-rule"/>
+<footer>
+  Site generated by <a href="https://typelevel.org/Laika/">Laika</a> with the Helium theme.
+</footer>
+
+
+      </main>
+
+    </div>
+
+  </body>
+
+</html>

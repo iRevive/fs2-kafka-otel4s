@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+  
+  <head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="generator" content="Typelevel Laika + Helium Theme" />
+  <title>Producers</title>
+  
+  <meta name="author" content="Maksym Ochenashko"/>
+  
+  <meta name="author" content="Maksym Ochenashko"/>
+  
+  
+  <meta name="description" content="site"/>
+  
+  
+  
+  
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Lato:400,700">
+  
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Fira+Mono:500">
+  
+  <link rel="stylesheet" type="text/css" href="../helium/site/icofont.min.css" />
+    <link rel="stylesheet" type="text/css" href="../helium/site/laika-helium.css" />
+    <link rel="stylesheet" type="text/css" href="../site.css" />
+    <link rel="stylesheet" type="text/css" href="../assets/tracing-explorer.css" />
+  <script src="../helium/site/laika-helium.js"></script>
+    <script src="../assets/tracing-explorer.js"></script>
+    <script src="../assets/consumer-spans.js"></script>
+    <script src="../assets/producer-spans.js"></script>
+  
+  
+  <script> /* for avoiding page load transitions */ </script>
+</head>
+
+  <body>
+
+    <header id="top-bar" class="light-default dark-default">
+
+  <div class="row">
+    <a id="nav-icon">
+      <i class="icofont-laika navigationMenu" title="Navigation">&#xefa2;</i>
+    </a>
+    
+    
+  </div>
+
+  <a class="text-link" href="../">fs2-kafka-otel4s</a>
+
+  <div class="row links">
+    
+    <a class="icon-link svg-link" href="https://github.com/iRevive/fs2-kafka-otel4s"><span class="github" title="Source Code"><svg class="svg-icon" width="100%" height="100%" viewBox="0 0 100 100" version="1.1" xmlns="http://www.w3.org/2000/svg" xml:space="preserve" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+  <g class="svg-shape">
+    <path d="M49.995,1c-27.609,-0 -49.995,22.386 -49.995,50.002c-0,22.09 14.325,40.83 34.194,47.444c2.501,0.458 3.413,-1.086 3.413,-2.412c0,-1.185 -0.043,-4.331 -0.067,-8.503c-13.908,3.021 -16.843,-6.704 -16.843,-6.704c-2.274,-5.773 -5.552,-7.311 -5.552,-7.311c-4.54,-3.103 0.344,-3.042 0.344,-3.042c5.018,0.356 7.658,5.154 7.658,5.154c4.46,7.64 11.704,5.433 14.552,4.156c0.454,-3.232 1.744,-5.436 3.174,-6.685c-11.102,-1.262 -22.775,-5.553 -22.775,-24.713c-0,-5.457 1.949,-9.92 5.147,-13.416c-0.516,-1.265 -2.231,-6.348 0.488,-13.233c0,0 4.199,-1.344 13.751,5.126c3.988,-1.108 8.266,-1.663 12.518,-1.682c4.245,0.019 8.523,0.574 12.517,1.682c9.546,-6.47 13.736,-5.126 13.736,-5.126c2.728,6.885 1.013,11.968 0.497,13.233c3.204,3.496 5.141,7.959 5.141,13.416c0,19.209 -11.691,23.436 -22.83,24.673c1.795,1.544 3.394,4.595 3.394,9.26c0,6.682 -0.061,12.076 -0.061,13.715c0,1.338 0.899,2.894 3.438,2.406c19.853,-6.627 34.166,-25.354 34.166,-47.438c-0,-27.616 -22.389,-50.002 -50.005,-50.002"/>
+  </g>
+</svg></span></a>
+    
+  </div>  
+
+</header>
+    
+    <nav id="sidebar">
+
+  <div class="row">
+    
+    <a class="icon-link svg-link" href="https://github.com/iRevive/fs2-kafka-otel4s"><span class="github" title="Source Code"><svg class="svg-icon" width="100%" height="100%" viewBox="0 0 100 100" version="1.1" xmlns="http://www.w3.org/2000/svg" xml:space="preserve" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+  <g class="svg-shape">
+    <path d="M49.995,1c-27.609,-0 -49.995,22.386 -49.995,50.002c-0,22.09 14.325,40.83 34.194,47.444c2.501,0.458 3.413,-1.086 3.413,-2.412c0,-1.185 -0.043,-4.331 -0.067,-8.503c-13.908,3.021 -16.843,-6.704 -16.843,-6.704c-2.274,-5.773 -5.552,-7.311 -5.552,-7.311c-4.54,-3.103 0.344,-3.042 0.344,-3.042c5.018,0.356 7.658,5.154 7.658,5.154c4.46,7.64 11.704,5.433 14.552,4.156c0.454,-3.232 1.744,-5.436 3.174,-6.685c-11.102,-1.262 -22.775,-5.553 -22.775,-24.713c-0,-5.457 1.949,-9.92 5.147,-13.416c-0.516,-1.265 -2.231,-6.348 0.488,-13.233c0,0 4.199,-1.344 13.751,5.126c3.988,-1.108 8.266,-1.663 12.518,-1.682c4.245,0.019 8.523,0.574 12.517,1.682c9.546,-6.47 13.736,-5.126 13.736,-5.126c2.728,6.885 1.013,11.968 0.497,13.233c3.204,3.496 5.141,7.959 5.141,13.416c0,19.209 -11.691,23.436 -22.83,24.673c1.795,1.544 3.394,4.595 3.394,9.26c0,6.682 -0.061,12.076 -0.061,13.715c0,1.338 0.899,2.894 3.438,2.406c19.853,-6.627 34.166,-25.354 34.166,-47.438c-0,-27.616 -22.389,-50.002 -50.005,-50.002"/>
+  </g>
+</svg></span></a>
+    
+  </div>
+
+  <ul class="nav-list">
+    <li class="level1 nav-leaf"><a href="../">fs2-kafka-otel4s</a></li>
+    <li class="level1 nav-header">Getting started</li>
+    <li class="level2 nav-leaf"><a href="consumers.html">Consumers</a></li>
+    <li class="level2 active nav-leaf"><a href="#">Producers</a></li>
+    <li class="level2 nav-leaf"><a href="configuration.html">Configuration</a></li>
+    <li class="level1 nav-header">Interactive guides</li>
+    <li class="level2 nav-leaf"><a href="../interactive-guides/consumer-tracing.html">Consumer tracing configurator</a></li>
+    <li class="level2 nav-leaf"><a href="../interactive-guides/producer-tracing.html">Producer tracing configurator</a></li>
+    <li class="level1 nav-header">API reference</li>
+    <li class="level2 nav-leaf"><a href="../reference/low-level-api.html">Low-level API</a></li>
+    <li class="level2 nav-leaf"><a href="../reference/producer-instrumentation.html">Producer instrumentation</a></li>
+    <li class="level1 nav-header">Project documentation</li>
+    <li class="level2 nav-leaf"><a href="../project/compliance-matrix.html">Compliance Matrix</a></li>
+  </ul>
+
+</nav>
+
+    <div id="container">
+
+      
+<nav id="page-nav">
+  <p class="header"><a href="#">Producers</a></p>
+
+  <ul class="nav-list">
+    <li class="level1 nav-leaf"><a href="#single-record-spans">Single-record spans</a></li>
+    <li class="level1 nav-leaf"><a href="#batch-modes">Batch modes</a></li>
+    <li class="level1 nav-leaf"><a href="#transactions">Transactions</a></li>
+  </ul>
+
+  <p class="footer"></p>
+</nav>
+
+
+      <main class="content">
+
+        <h1 id="producers" class="title">Producers</h1>
+        <p>Add <code>.traced(config)</code> and use the normal producer API. Trace headers are added automatically.</p>
+        <pre><code class="nohighlight"><span class="keyword">import</span><span> </span><span class="identifier">cats</span><span>.</span><span class="identifier">effect</span><span>.</span><span class="type-name">IO</span><span>
+</span><span class="keyword">import</span><span> </span><span class="identifier">fs2</span><span>.</span><span class="type-name">Stream</span><span>
+</span><span class="keyword">import</span><span> </span><span class="identifier">fs2</span><span>.</span><span class="identifier">kafka</span><span>.</span><span class="identifier">otel4s</span><span>.</span><span class="identifier">trace</span><span>.</span><span class="type-name">KafkaTracer</span><span>
+</span><span class="keyword">import</span><span> </span><span class="identifier">fs2</span><span>.</span><span class="identifier">kafka</span><span>.</span><span class="identifier">otel4s</span><span>.</span><span class="identifier">trace</span><span>.</span><span class="identifier">syntax</span><span>.</span><span class="identifier">_</span><span>
+</span><span class="keyword">import</span><span> </span><span class="identifier">org</span><span>.</span><span class="identifier">typelevel</span><span>.</span><span class="identifier">otel4s</span><span>.</span><span class="identifier">trace</span><span>.</span><span class="type-name">TracerProvider</span><span>
+</span><span class="keyword">import</span><span> </span><span class="identifier">fs2</span><span>.</span><span class="identifier">kafka</span><span>.{</span><span class="type-name">KafkaProducer</span><span>, </span><span class="type-name">ProducerRecord</span><span>, </span><span class="type-name">ProducerRecords</span><span>, </span><span class="type-name">ProducerResult</span><span>, </span><span class="type-name">ProducerSettings</span><span>, </span><span class="type-name">Serializer</span><span>}
+
+</span><span class="keyword">val</span><span> </span><span class="identifier">tracerConfig</span><span>: </span><span class="type-name">KafkaTracer</span><span>.</span><span class="type-name">Config</span><span> =
+  </span><span class="type-name">KafkaTracer</span><span>.</span><span class="type-name">Config</span><span>.</span><span class="keyword">default</span><span>
+
+</span><span class="keyword">val</span><span> </span><span class="identifier">producerSettings</span><span>: </span><span class="type-name">ProducerSettings</span><span>[</span><span class="type-name">IO</span><span>, </span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>] =
+  </span><span class="type-name">ProducerSettings</span><span>[</span><span class="type-name">IO</span><span>, </span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>](
+    </span><span class="type-name">Serializer</span><span>[</span><span class="type-name">IO</span><span>, </span><span class="type-name">String</span><span>],
+    </span><span class="type-name">Serializer</span><span>[</span><span class="type-name">IO</span><span>, </span><span class="type-name">String</span><span>]
+  )
+    .</span><span class="identifier">withBootstrapServers</span><span>(</span><span class="string-literal">&quot;localhost:9092&quot;</span><span>)
+    .</span><span class="identifier">withClientId</span><span>(</span><span class="string-literal">&quot;orders-producer&quot;</span><span>)
+
+</span><span class="keyword">def</span><span> </span><span class="declaration-name">sendOrder</span><span>(</span><span class="keyword">implicit</span><span> </span><span class="identifier">tracerProvider</span><span>: </span><span class="type-name">TracerProvider</span><span>[</span><span class="type-name">IO</span><span>]): </span><span class="type-name">IO</span><span>[</span><span class="type-name">ProducerResult</span><span>[</span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>]] =
+  </span><span class="type-name">Stream</span><span>
+    .</span><span class="identifier">resource</span><span>(</span><span class="type-name">KafkaProducer</span><span>.</span><span class="identifier">resource</span><span>[</span><span class="type-name">IO</span><span>, </span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>](</span><span class="identifier">producerSettings</span><span>))
+    .</span><span class="identifier">traced</span><span>(</span><span class="identifier">tracerConfig</span><span>)
+    .</span><span class="identifier">evalMap</span><span> { </span><span class="identifier">producer</span><span> =&gt;
+      </span><span class="identifier">producer</span><span>.</span><span class="identifier">produce</span><span>(
+        </span><span class="type-name">ProducerRecords</span><span>.</span><span class="identifier">one</span><span>(
+          </span><span class="type-name">ProducerRecord</span><span>(</span><span class="string-literal">&quot;orders&quot;</span><span>, </span><span class="string-literal">&quot;order-1&quot;</span><span>, </span><span class="string-literal">&quot;&quot;&quot;{&quot;status&quot;:&quot;created&quot;}&quot;&quot;&quot;</span><span>)
+        )
+      ).</span><span class="identifier">flatten</span><span>
+    }
+    .</span><span class="identifier">compile</span><span>
+    .</span><span class="identifier">onlyOrError</span></code></pre>
+        <p>Use <code>.produce(records).flatten</code> to submit records and wait for Kafka to acknowledge them.
+        The send span ends after acknowledgment.</p>
+        <p>Use the <a href="../interactive-guides/producer-tracing.html">interactive guide</a> to compare spans and outgoing headers.</p>
+        
+        <h2 id="single-record-spans" class="section"><a class="anchor-link left" href="#single-record-spans"><i class="icofont-laika link">&#xef71;</i></a>Single-record spans</h2>
+        <p>For one record without existing trace headers:</p>
+        <pre class="keep-together pdf epub"><code class="text">                         time --&gt;
+                    +----------------+--------------------+
+work                | submit records | await Kafka ack    |
+                    +----------------+--------------------+
+
+Span lifetime
+-----------------------------------------------------------
+  send orders       [======================================]
+
+The send span&#39;s context is injected into the record headers.</code></pre>
+        
+        <h2 id="batch-modes" class="section"><a class="anchor-link left" href="#batch-modes"><i class="icofont-laika link">&#xef71;</i></a>Batch modes</h2>
+        <p>For batches without trace headers:</p>
+        <ul>
+          <li><code>PerRecordSpans</code> (default) gives each record its own context.</li>
+          <li><code>SharedSendSpan</code> uses one send context for all records, creating fewer spans.</li>
+        </ul>
+        <pre class="keep-together pdf epub"><code class="text">PerRecordSpans (default)            SharedSendSpan
+
+  create orders (m1)                 send orders
+  create orders (m2)                 context injected into m1, m2
+  send orders
+  links to both create contexts
+
+Create and send use the active application span as parent, if present.
+Rows show relationships. They do not show timing.</code></pre>
+        <p>Existing recognized record trace context is preserved and linked from the send span. A single record with existing
+        context produces a <code>CLIENT</code> send span; without it, a <code>PRODUCER</code> send span. See
+        <a href="../reference/producer-instrumentation.html">Producer instrumentation</a> for the full batch matrix, attributes, errors, and
+        transactional behavior.</p>
+        
+        <h2 id="transactions" class="section"><a class="anchor-link left" href="#transactions"><i class="icofont-laika link">&#xef71;</i></a>Transactions</h2>
+        <p>Transactional APIs remain available on the traced producer:</p>
+        <pre class="keep-together pdf epub"><code class="nohighlight"><span class="keyword">import</span><span> </span><span class="identifier">fs2</span><span>.</span><span class="identifier">kafka</span><span>.</span><span class="identifier">otel4s</span><span>.</span><span class="identifier">trace</span><span>.</span><span class="type-name">TracedKafkaProducer</span><span>
+
+</span><span class="keyword">def</span><span> </span><span class="declaration-name">sendTransactionally</span><span>(
+    </span><span class="identifier">producer</span><span>: </span><span class="type-name">TracedKafkaProducer</span><span>[</span><span class="type-name">IO</span><span>, </span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>]
+): </span><span class="type-name">IO</span><span>[</span><span class="type-name">ProducerResult</span><span>[</span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>]] =
+  </span><span class="identifier">producer</span><span>.</span><span class="identifier">produceTransactionally</span><span>(
+    </span><span class="type-name">ProducerRecords</span><span>.</span><span class="identifier">one</span><span>(</span><span class="type-name">ProducerRecord</span><span>(</span><span class="string-literal">&quot;orders&quot;</span><span>, </span><span class="string-literal">&quot;order-1&quot;</span><span>, </span><span class="string-literal">&quot;&quot;&quot;{&quot;status&quot;:&quot;created&quot;}&quot;&quot;&quot;</span><span>))
+  )</span></code></pre>
+        <p>Use producer settings configured for transactions when calling transactional APIs.</p>
+        <p>For tracing policy, see <a href="configuration.html">Configuration</a>. For explicit operation handles, see the <a href="../reference/low-level-api.html">Low-level API</a>.</p>
+
+        
+<hr class="footer-rule"/>
+<footer>
+  Site generated by <a href="https://typelevel.org/Laika/">Laika</a> with the Helium theme.
+</footer>
+
+
+      </main>
+
+    </div>
+
+  </body>
+
+</html>
