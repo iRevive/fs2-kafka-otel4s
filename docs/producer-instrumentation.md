@@ -1,24 +1,13 @@
 # Producer instrumentation
 
+Start with the [syntax-based producer example](../README.md#producer-syntax) for setup and a first send.
+This reference covers span selection, propagation, and lifecycle details.
+
 Producer instrumentation decides which spans to create from three inputs:
 
 - the number of records being produced;
 - whether each record already contains valid trace context in its Kafka headers;
 - the configured `BatchSpanMode`.
-
-## Client-free operations
-
-`KafkaTracer.producerSpans(ProducerMetadata.Provider.constant(metadata))` creates a configured `ProducerSpans` handle
-without a Kafka client. Like `ConsumerSpans`, it takes key and value types at each operation. The producer adapter
-exposes its own handle through `.spans` and delegates traced sends to the same implementation.
-
-Call `spans.produce(records)(send)`, where `send` publishes the prepared records passed to it and returns the usual
-two-stage fs2-kafka effect. The same span matrix, attribute precedence, header preservation, batch configuration,
-suppression, and finalization rules below apply. Empty input calls `send` without metadata lookup or spans. A noop
-handle passes the original records directly to `send` without metadata lookup or propagation.
-
-The caller must evaluate the returned acknowledgment effect to finalize the send span. Transactions and serializer
-switching remain in `TracedKafkaProducer`; a framework using the primitive owns its transaction boundary.
 
 ## Span creation matrix
 
@@ -278,10 +267,10 @@ With the default send-span finalization strategy:
 - the status description contains the exception message when one is available;
 - cancellation sets `error.type = "canceled"` and error status with description `canceled`.
 
-`withSendSpanSetup` can replace the send span's name, additional attributes, and finalization strategy. 
+`withSendSpanSetup` can replace the send span's name, additional attributes, and finalization strategy.
 Returning `None` suppresses the send span for that batch. It does not change the span kind, link selection, or create spans.
 
-When the send span is suppressed, producing the records and any configured create-span preparation still proceed. 
+When the send span is suppressed, producing the records and any configured create-span preparation still proceed.
 Records without an existing propagated context can inherit the ambient context, but there is no send-span context to inject.
 
 If propagation fails while preparing a batch, all create spans allocated before the failure are released. The send span is not created because batch preparation did not complete. `SharedSendSpan` has no create spans to release.
@@ -302,3 +291,17 @@ The following operations do not create producer spans by themselves:
 - `injectHeaders`.
 
 Empty regular and transactional produce operations delegate directly to the underlying producer and create no spans.
+
+## Client-free operations
+
+`KafkaTracer.producerSpans(ProducerMetadata.Provider.constant(metadata))` creates a configured `ProducerSpans` handle
+without a Kafka client. Like `ConsumerSpans`, it takes key and value types at each operation. The producer adapter
+exposes its own handle through `.spans` and delegates traced sends to the same implementation.
+
+Call `spans.produce(records)(send)`, where `send` publishes the prepared records passed to it and returns the usual
+two-stage fs2-kafka effect. The same span matrix, attribute precedence, header preservation, batch configuration,
+suppression, and finalization rules below apply. Empty input calls `send` without metadata lookup or spans. A noop
+handle passes the original records directly to `send` without metadata lookup or propagation.
+
+The caller must evaluate the returned acknowledgment effect to finalize the send span. Transactions and serializer
+switching remain in `TracedKafkaProducer`; a framework using the primitive owns its transaction boundary.
