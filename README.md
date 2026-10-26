@@ -588,3 +588,13 @@ record/chunk syntax are deprecated; use explicit handles instead:
 Duplicate propagation headers use last-match extraction. A recognized context can be unsampled; malformed or null
 authoritative headers are treated as missing. See [Producer instrumentation](docs/producer-instrumentation.md) for
 header preservation and injection details.
+
+## Documentation site
+
+Run `sbt 'site/tlSitePreview'` and open <http://localhost:4242> to explore consumer tracing interactively.
+The selector shows span lifetimes, configuration, and parentage for each consumer API. Its selections are included
+in the URL so you can share a particular configuration.
+
+Site sources live in `docs/site`. Build the static site with `sbt 'site/tlSite'`; the output is
+`modules/site/target/docs/site`. The site uses `sbt-typelevel-site` (mdoc and Laika) and is built in CI.
+Automatic publishing is disabled until hosting is configured. Generate this README with `sbt 'docs/mdoc'`.

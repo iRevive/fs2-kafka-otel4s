@@ -14,6 +14,10 @@ ThisBuild / scalaVersion := Scala213 // the default Scala
 
 ThisBuild / tlCiDependencyGraphJob := false
 
+// Build and check the site in CI; publishing can be enabled when hosting is configured.
+ThisBuild / tlSitePublishBranch := None
+ThisBuild / tlSitePublishTags := false
+
 ThisBuild / githubWorkflowJavaVersions := Seq(JavaSpec.temurin("17"))
 
 lazy val Versions = new {
@@ -34,6 +38,7 @@ lazy val munitDependencies = Def.settings(
 lazy val root = tlCrossRootProject.aggregate(
   trace,
   docs,
+  site,
 )
 
 lazy val trace = project
@@ -65,5 +70,21 @@ lazy val docs = project
     mdocVariables := Map(
       "VERSION" -> version.value
     ),
+  )
+  .dependsOn(trace)
+
+lazy val site = project
+  .in(file("modules/site"))
+  .enablePlugins(TypelevelSitePlugin)
+  .settings(
+    mdocIn := file("docs/site"),
+    mdocOut := target.value / "mdoc",
+    laikaConfig := LaikaConfig.defaults.withRawContent,
+    tlSiteHelium := tlSiteHelium.value.all
+      .metadata(title = Some("fs2-kafka-otel4s"), language = Some("en"))
+      .site
+      .internalCSS(laika.ast.Path.Root / "assets" / "consumer-spans.css")
+      .site
+      .internalJS(laika.ast.Path.Root / "assets" / "consumer-spans.js"),
   )
   .dependsOn(trace)
