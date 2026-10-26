@@ -239,9 +239,11 @@ trait TracedKafkaConsumer[F[_], K, V] {
     *   .parJoinUnbounded
     * }}}
     *
-    * This method does not commit offsets or emit `commit` spans. Use it with a downstream commit pipe such as
-    * `commitBatchWithin`; generic commit pipes only receive offsets, not the consumed records required for Kafka span
-    * attributes.
+    * This method does not commit offsets or emit `commit` spans. Use it with
+    * `tracedConsumer.spans.commitBatchWithin(n, d)` to trace downstream offset commits. That helper reports the topics
+    * and partitions available from offsets, while record counts and record details remain unknown. The standard
+    * `fs2.kafka.commitBatchWithin` pipe also works, but does not add tracing. Commit spans use the context active when
+    * each commit call runs.
     *
     * Execution scope for one chunk, with all spans enabled and no ambient application span:
     * {{{

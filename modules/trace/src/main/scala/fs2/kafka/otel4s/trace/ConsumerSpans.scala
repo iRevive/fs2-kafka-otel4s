@@ -16,18 +16,23 @@
 
 package fs2.kafka.otel4s.trace
 
+import cats.Parallel
 import cats.effect.Concurrent
+import cats.effect.Temporal
 import cats.syntax.all._
-import fs2.Chunk
-import fs2.kafka.{CommittableConsumerRecord, ConsumerRecord}
+import fs2.{Chunk, Pipe}
+import fs2.kafka.{CommittableConsumerRecord, CommittableOffset, CommittableOffsetBatch, ConsumerRecord}
 import fs2.kafka.otel4s.trace.instances._
 import fs2.kafka.otel4s.trace.internal.Semconv
+import org.apache.kafka.clients.consumer.OffsetAndMetadata
+import org.apache.kafka.common.TopicPartition
 import org.typelevel.otel4s.Attributes
 import org.typelevel.otel4s.trace.{SpanContext, SpanKind, Tracer}
 
 import scala.util.chaining._
+import scala.concurrent.duration.FiniteDuration
 
-/** Configured consumer tracing operations independent of a live Kafka consumer.
+/** Traces consumer operations using supplied consumer metadata. A Kafka consumer instance is not required.
   *
   * Operations use the [[KafkaTracer.Config]] supplied when creating the owning [[KafkaTracer]]:
   *
@@ -35,12 +40,15 @@ import scala.util.chaining._
   *   - [[KafkaTracer.Config.withBatchProcessSpanSetup]] configures `processBatch`, including singleton batches,
   *     independently of single-record setup.
   *   - [[KafkaTracer.Config.withReceiveSpanSetup]] configures both `receive` and `receiveCommittable`.
+  *   - [[KafkaTracer.Config.withCommitSpanSetup]] configures commits made by the consume helpers, `commitOffsets`, and
+  *     `commitBatchWithin`.
   *
   * Each setup function receives operation metadata and can choose the span name, attributes, and finalization strategy.
   * Returning `None` skips span creation and link extraction while still evaluating the supplied effect. Metadata is
   * resolved before setup is evaluated. [[KafkaTracer.Config.withoutProcessSpans]] suppresses both single-record and
   * batch process spans; [[KafkaTracer.Config.withoutReceiveSpans]] suppresses both receive operations. A later setup
   * configuration replaces the corresponding hook and can re-enable that operation.
+  * [[KafkaTracer.Config.withoutCommitSpans]] suppresses commit spans.
   *
   * Attributes are applied in order: derived semantic attributes, constant attributes configured with
   * [[KafkaTracer.Config.withConstAttributes]] or [[KafkaTracer.Config.addConstAttributes]], then setup attributes.
@@ -50,11 +58,13 @@ import scala.util.chaining._
   * Setup functions do not change span kind, parenting, or links. Process spans remain consumer roots linked to
   * recognized contexts from record headers; receive spans remain client roots linked to contexts from each record in
   * the chunk. [[KafkaTracer.Config.withBatchSpanMode]] controls producer batches and does not affect `processBatch`.
-  * Send and commit setup options do not affect these operations; these methods do not publish records or commit
-  * offsets.
+  * Commit spans have kind `Client` and use the active span as parent, or are roots when no span is active. Send setup
+  * options only affect producers. The primitive methods trace supplied effects without calling a committer; the
+  * companion's `commitBatchWithin` extension batches offsets and traces the resulting commit calls.
   *
-  * Empty receive and process batches evaluate the effect without metadata lookup, setup evaluation, or span creation.
-  * Handles obtained from [[KafkaTracer.noop]] also evaluate effects directly, without metadata lookup or propagation.
+  * Empty receive and process batches and offset maps evaluate the effect without metadata lookup, setup evaluation, or
+  * span creation. Handles obtained from [[KafkaTracer.noop]] also evaluate effects directly, without metadata lookup or
+  * propagation.
   */
 sealed trait ConsumerSpans[F[_]] {
 
@@ -171,17 +181,46 @@ sealed trait ConsumerSpans[F[_]] {
     */
   def receiveCommittable[K: KafkaMessageKey, V, A](records: Chunk[CommittableConsumerRecord[F, K, V]])(fa: F[A]): F[A]
 
+  /** Runs `fa` inside a commit span using [[KafkaTracer.Config.withCommitSpanSetup]].
+    *
+    * Supply the actual commit effect as `fa`. The map provides topics and partitions; it cannot tell us the record
+    * count, record offsets, keys, tombstones, or message links. Empty maps run `fa` without a span or metadata lookup.
+    * The active span becomes the commit span's parent. Without an active span, the commit span is a root.
+    */
+  def commitOffsets[A](offsets: Map[TopicPartition, OffsetAndMetadata])(fa: F[A]): F[A]
+
 }
 
-private[trace] object ConsumerSpans {
+object ConsumerSpans {
 
-  def apply[F[_]: Concurrent: Tracer](
+  /** Adds an explicit traced commit pipe to a consumer span handle.
+    *
+    * A batch is committed when it reaches `n` offsets or `d` elapses, following `fs2-kafka`'s `commitBatchWithin`
+    * behavior. Each original committer receives its own span-wrapped commit call. The wait for a batch does not have a
+    * span. Offset notifications do not reveal a safe record count, so commit spans keep `recordCount` unknown. Use
+    * offsets produced by the consumer described by this handle's metadata. Each commit span uses the context active
+    * when its commit call runs. The no-op handle and disabled commit setup still commit offsets normally.
+    *
+    * This is an explicit traced pipe. The upstream `fs2.kafka.commitBatchWithin` remains available and does not add
+    * tracing by itself.
+    */
+  implicit final class ConsumerSpansSyntax[F[_]](private val spans: ConsumerSpans[F]) extends AnyVal {
+
+    def commitBatchWithin(n: Int, d: FiniteDuration)(implicit
+        F: Temporal[F],
+        P: Parallel[F]
+    ): Pipe[F, CommittableOffset[F], Unit] =
+      commitBatches(spans, n, d)
+
+  }
+
+  private[trace] def apply[F[_]: Concurrent: Tracer](
       metadata: ConsumerMetadata.Provider[F],
       config: KafkaTracer.Config
   ): Impl[F] =
     new Impl(metadata, config)
 
-  def noop[F[_]]: ConsumerSpans[F] =
+  private[trace] def noop[F[_]]: ConsumerSpans[F] =
     new Noop
 
   private final class Noop[F[_]] extends ConsumerSpans[F] {
@@ -192,6 +231,9 @@ private[trace] object ConsumerSpans {
     override def receiveCommittable[K: KafkaMessageKey, V, A](
         records: Chunk[CommittableConsumerRecord[F, K, V]]
     )(fa: F[A]): F[A] = fa
+
+    override def commitOffsets[A](offsets: Map[TopicPartition, OffsetAndMetadata])(fa: F[A]): F[A] = fa
+
   }
 
   private[trace] final class Impl[F[_]: Concurrent: Tracer](
@@ -279,16 +321,27 @@ private[trace] object ConsumerSpans {
       else
         metadata.get.flatMap { resolved =>
           val context = Semconv.commitSpanContext(records, resolved.clientId, resolved.groupId)
-          config.commitSpanSetup(context).fold(fa) { setup =>
-            Tracer[F]
-              .spanBuilder(setup.spanName)
-              .withSpanKind(SpanKind.Client)
-              .withFinalizationStrategy(setup.finalizationStrategy)
-              .addAttributes(Semconv.commitAttributes(context, records) ++ config.constAttributes ++ setup.attributes)
-              .build
-              .surround(fa)
-          }
+          commitWithContext(context, Semconv.commitAttributes(context, records))(fa)
         }
+
+    override def commitOffsets[A](offsets: Map[TopicPartition, OffsetAndMetadata])(fa: F[A]): F[A] =
+      if (offsets.isEmpty) fa
+      else
+        metadata.get.flatMap { resolved =>
+          val context = Semconv.offsetCommitSpanContext(offsets, resolved.clientId, resolved.groupId)
+          commitWithContext(context, Semconv.offsetCommitAttributes(context, offsets))(fa)
+        }
+
+    private def commitWithContext[A](context: CommitSpanContext, attributes: => Attributes)(fa: F[A]): F[A] =
+      config.commitSpanSetup(context).fold(fa) { setup =>
+        Tracer[F]
+          .spanBuilder(setup.spanName)
+          .withSpanKind(SpanKind.Client)
+          .withFinalizationStrategy(setup.finalizationStrategy)
+          .addAttributes(attributes ++ config.constAttributes ++ setup.attributes)
+          .build
+          .surround(fa)
+      }
 
     private def recordTraceContextLinks[K: KafkaMessageKey, V](
         records: Iterable[ConsumerRecord[K, V]]
@@ -300,5 +353,17 @@ private[trace] object ConsumerSpans {
       }
 
   }
+
+  private def commitBatches[F[_]: Temporal: Parallel](
+      spans: ConsumerSpans[F],
+      n: Int,
+      d: FiniteDuration
+  ): Pipe[F, CommittableOffset[F], Unit] =
+    _.groupWithin(n, d).evalMap { chunk =>
+      val batch = CommittableOffsetBatch.fromFoldable(chunk)
+      batch.offsets.toList.parTraverse_ { case (committer, offsets) =>
+        spans.commitOffsets(offsets)(committer.commit(offsets))
+      }
+    }
 
 }

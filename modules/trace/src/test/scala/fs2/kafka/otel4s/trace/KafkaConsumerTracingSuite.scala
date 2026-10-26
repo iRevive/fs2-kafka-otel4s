@@ -367,7 +367,8 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
           KafkaTracer.Config.default.withCommitSpanSetup { ctx =>
             Some(
               KafkaTracer.Config.SpanSetup.Commit(
-                spanName = s"finish ${ctx.topics.headOption.getOrElse("unknown")} ${ctx.recordCount}",
+                spanName =
+                  s"finish ${ctx.topics.headOption.getOrElse("unknown")} ${ctx.recordCount.fold("unknown")(_.toString)}",
                 attributes = Attributes(
                   MessagingExperimentalAttributes.MessagingOperationName("finish")
                 ),
