@@ -194,7 +194,7 @@ trait TracedKafkaConsumerStreamTracingSyntax {
     )(implicit F: Concurrent[F], P: Parallel[F]): F[Nothing] =
       self.evalMap(_.consumeChunk(chunkProcessor)).compile.onlyOrError
 
-    /** Consumes from all assigned partitions concurrently, tracing each emitted chunk with `receive`, per-record
+    /** Consumes from all assigned partitions concurrently, tracing each emitted chunk with `receive`, one batch
       * `process`, and owned `commit` spans.
       *
       * Is shorthand for:
@@ -202,6 +202,29 @@ trait TracedKafkaConsumerStreamTracingSyntax {
       * {{{
       * tracedConsumers.evalMap(_.consumeChunkTraced(chunkProcessor)).compile.onlyOrError
       * }}}
+      *
+      * Execution scope for one chunk, with all spans enabled and no ambient application span:
+      * {{{
+      * Input chunk: [m1, m2, m3]
+      *
+      *                          time -->
+      *                     +--------------------------+--------+
+      * handler             | handleChunk([m1,m2,m3])  |commit  |
+      *                     |       called once        |offsets |
+      *                     +--------------------------+--------+
+      *
+      * Span lifetime                                             Controlled by
+      * --------------------------------------------------------  -------------------------
+      * > receive           [=========================]           withReceiveSpanSetup
+      * > process batch     [=========================]           withBatchProcessSpanSetup
+      * > commit                                       [=======]  withCommitSpanSetup
+      * }}}
+      *
+      * Span rows are aligned because receive and process spans are independent roots. Bars show timing; widths are
+      * illustrative. Returning `None` from a setup function removes only its span row; handler execution and commit
+      * behavior are unchanged. Indentation is reserved for actual parent-child span relationships.
+      *
+      * See the corresponding [[TracedKafkaConsumer]] method for span relationships and commit ownership.
       */
     def consumeChunkTraced(
         chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
@@ -216,6 +239,31 @@ trait TracedKafkaConsumerStreamTracingSyntax {
       * {{{
       * tracedConsumers.evalMap(_.consumeRecordTraced(recordProcessor)).compile.onlyOrError
       * }}}
+      *
+      * Execution scope for one chunk, with all spans enabled and no ambient application span:
+      * {{{
+      * Input chunk: [m1, m2, m3]
+      *
+      *                          time -->
+      *                     +--------+--------+--------+--------+
+      * handler             |handle  |handle  |handle  |commit  |
+      *                     |  m1    |  m2    |  m3    |offsets |
+      *                     +--------+--------+--------+--------+
+      *
+      * Span lifetime                                             Controlled by
+      * --------------------------------------------------------  -------------------------
+      * > receive           [=========================]           withReceiveSpanSetup
+      * > process (m1)      [=======]                             withProcessSpanSetup
+      * > process (m2)               [=======]                    withProcessSpanSetup
+      * > process (m3)                        [=======]           withProcessSpanSetup
+      * > commit                                       [=======]  withCommitSpanSetup
+      * }}}
+      *
+      * Span rows are aligned because receive and process spans are independent roots. Bars show timing; widths are
+      * illustrative. Returning `None` from a setup function removes only its span row; handler execution and commit
+      * behavior are unchanged. Indentation is reserved for actual parent-child span relationships.
+      *
+      * See the corresponding [[TracedKafkaConsumer]] method for span relationships and commit ownership.
       */
     def consumeRecordTraced[A](
         recordProcessor: ConsumerRecord[K, V] => F[A]
@@ -230,6 +278,32 @@ trait TracedKafkaConsumerStreamTracingSyntax {
       * {{{
       * tracedConsumers.flatMap(_.recordsTraced(f))
       * }}}
+      *
+      * Execution scope for one chunk, with all spans enabled and no ambient application span:
+      * {{{
+      * Input chunk: [m1, m2, m3]
+      *
+      *                          time -->
+      *                     +--------+--------+--------+--------+
+      * work                |deliver |handle  |handle  |handle  |
+      *                     | chunk  |  m1    |  m2    |  m3    |
+      *                     +--------+--------+--------+--------+
+      *
+      * Span lifetime                                             Controlled by
+      * --------------------------------------------------------  -------------------------
+      * > receive           [=======]                             withReceiveSpanSetup
+      * > process (m1)               [=======]                    withProcessSpanSetup
+      * > process (m2)                        [=======]           withProcessSpanSetup
+      * > process (m3)                                 [=======]  withProcessSpanSetup
+      *
+      * Results are emitted after each handler; no automatic commit.
+      * }}}
+      *
+      * Span rows are aligned because receive and process spans are independent roots. Bars show timing; widths are
+      * illustrative. Returning `None` from a setup function removes only its span row; handler execution and commit
+      * behavior are unchanged. Indentation is reserved for actual parent-child span relationships.
+      *
+      * See the corresponding [[TracedKafkaConsumer]] method for span relationships and commit ownership.
       */
     def recordsTraced[A](
         f: CommittableConsumerRecord[F, K, V] => F[A]

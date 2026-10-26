@@ -20,6 +20,7 @@ import cats.effect.{Deferred, IO, Ref}
 import fs2.Chunk
 import fs2.kafka._
 import io.opentelemetry.api.common.AttributeKey
+import org.typelevel.otel4s.oteljava.testkit.AttributesExpectation
 import org.typelevel.otel4s.oteljava.testkit.trace.{SpanExpectation, TraceForestExpectation}
 import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
 import org.typelevel.otel4s.Attributes
@@ -175,6 +176,154 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
     }
   }
 
+  test("processBatch creates one linked span around one callback and summarizes mixed records") {
+    KafkaTracerTestkit.create().use { testkit =>
+      implicit val tracerProvider: org.typelevel.otel4s.trace.TracerProvider[IO] = testkit.tracerProvider
+      import testkit.appTracer
+      for {
+        producer <- testkit.tracedProducer[String, String](StubKafkaProducer.metadataOnly("producer"))
+        first <- Tracer[IO].rootSpan("source-one").surround {
+          for {
+            context <- Tracer[IO].currentSpanOrThrow.map(_.context)
+            record <- producer.injectHeaders(ProducerRecord("orders-a", "one", "a"))
+          } yield (context, record.headers)
+        }
+        second <- Tracer[IO].rootSpan("source-two").surround {
+          for {
+            context <- Tracer[IO].currentSpanOrThrow.map(_.context)
+            record <- producer.injectHeaders(ProducerRecord("orders-b", "two", "b"))
+          } yield (context, record.headers)
+        }
+        (firstContext, firstHeaders) = first
+        (secondContext, secondHeaders) = second
+        records = Chunk(
+          ConsumerRecord("orders-a", 0, 11L, "one", "a").withHeaders(firstHeaders),
+          ConsumerRecord("orders-b", 1, 12L, "two", "b").withHeaders(secondHeaders)
+        )
+        tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
+        spans = tracer.consumerSpans(provider(ConsumerMetadata(Some("client"), Some("group"))))
+        callbackCount <- Ref[IO].of(0)
+        _ <- appTracer.rootSpan("ambient").surround {
+          spans.processBatch(records)(
+            callbackCount.update(_ + 1) *> Tracer[IO].spanBuilder("callback").build.surround(IO.unit)
+          )
+        }
+        count <- callbackCount.get
+        finished <- testkit.finishedSpans
+        _ <- IO {
+          assertEquals(count, 1)
+          assertExpected(
+            finished,
+            TraceForestExpectation.unordered(
+              root(SpanExpectation.internal("source-one").scopeName("fs2.kafka.otel4s.tests")),
+              root(SpanExpectation.internal("source-two").scopeName("fs2.kafka.otel4s.tests")),
+              root(SpanExpectation.internal("ambient").scopeName("fs2.kafka.otel4s.tests")),
+              root(
+                SpanExpectation
+                  .consumer("process")
+                  .scopeName("fs2.kafka")
+                  .attributes(
+                    AttributesExpectation.where(
+                      "mixed batch has count but no single-record destination, partition, or offset"
+                    ) { attributes =>
+                      AttributesExpectation
+                        .subset(
+                          Attributes(
+                            MessagingExperimentalAttributes.MessagingBatchMessageCount(2L),
+                            MessagingExperimentalAttributes.MessagingClientId("client"),
+                            MessagingExperimentalAttributes.MessagingConsumerGroupName("group")
+                          )
+                        )
+                        .matches(attributes) &&
+                      attributes.get[String]("messaging.destination.name").isEmpty &&
+                      attributes.get[String]("messaging.destination.partition.id").isEmpty &&
+                      attributes.get[Long]("messaging.kafka.offset").isEmpty
+                    }
+                  )
+                  .links(
+                    LinkSetExpectation.exactly(
+                      LinkExpectation.any.spanContext(
+                        SpanContextExpectation.any
+                          .traceIdHex(firstContext.traceIdHex)
+                          .spanIdHex(firstContext.spanIdHex)
+                          .remote(true)
+                      ),
+                      LinkExpectation.any.spanContext(
+                        SpanContextExpectation.any
+                          .traceIdHex(secondContext.traceIdHex)
+                          .spanIdHex(secondContext.spanIdHex)
+                          .remote(true)
+                      )
+                    )
+                  ),
+                TraceExpectation.leaf(SpanExpectation.internal("callback").scopeName("fs2.kafka.otel4s.tests"))
+              )
+            )
+          )
+        }
+      } yield ()
+    }
+  }
+
+  test("processBatch uses its own setup context and emits count for a singleton batch") {
+    KafkaTracerTestkit.create().use { testkit =>
+      implicit val tracerProvider: org.typelevel.otel4s.trace.TracerProvider[IO] = testkit.tracerProvider
+      val record = ConsumerRecord("orders", 3, 21L, "key", "value")
+      for {
+        tracer <- KafkaTracer.create[IO](
+          KafkaTracer.Config.default
+            .addConstAttributes(MessagingExperimentalAttributes.MessagingOperationName("constant"))
+            .withBatchProcessSpanSetup { context =>
+              Some(
+                KafkaTracer.Config.SpanSetup.Process(
+                  s"batch ${context.recordCount} ${context.topics.size} ${context.offset.getOrElse(-1L)}",
+                  Attributes(MessagingExperimentalAttributes.MessagingOperationName("setup")),
+                  KafkaTracer.Config.Defaults.spanFinalizationStrategy
+                )
+              )
+            }
+        )
+        spans = tracer.consumerSpans(provider(ConsumerMetadata(None, None)))
+        _ <- spans.processBatch(Chunk.singleton(record))(IO.unit)
+        finished <- testkit.finishedSpans
+      } yield {
+        assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(
+              SpanExpectation
+                .consumer("batch 1 1 21")
+                .scopeName("fs2.kafka")
+                .attributesSubset(
+                  MessagingExperimentalAttributes.MessagingBatchMessageCount(1L),
+                  MessagingExperimentalAttributes.MessagingKafkaOffset(21L),
+                  MessagingExperimentalAttributes.MessagingOperationName("setup")
+                )
+            )
+          )
+        )
+      }
+    }
+  }
+
+  test("single-record and batch process setup hooks suppress independently") {
+    KafkaTracerTestkit.create().use { testkit =>
+      implicit val tracerProvider: org.typelevel.otel4s.trace.TracerProvider[IO] = testkit.tracerProvider
+      val record = ConsumerRecord("topic", 0, 1L, "key", "value")
+      val config = KafkaTracer.Config.default.withBatchProcessSpanSetup(_ => None)
+      for {
+        tracer <- KafkaTracer.create[IO](config)
+        spans = tracer.consumerSpans(provider(ConsumerMetadata(None, None)))
+        _ <- spans.processBatch(Chunk.singleton(record))(IO.unit)
+        _ <- spans.process(record)(IO.unit)
+        finished <- testkit.finishedSpans
+      } yield assertExpected(
+        finished,
+        TraceForestExpectation.unordered(root(SpanExpectation.consumer("process topic").scopeName("fs2.kafka")))
+      )
+    }
+  }
+
   test("explicit consumer spans evaluate the supplied provider, while noop does not") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: org.typelevel.otel4s.trace.TracerProvider[IO] = testkit.tracerProvider
@@ -188,16 +337,29 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
         }
         spans = tracer.consumerSpans(provider)
         _ <- spans.process(record)(IO.unit)
+        emptyResult <- tracer
+          .consumerSpans(new ConsumerMetadata.Provider[IO] {
+            override def get: IO[ConsumerMetadata] = IO.raiseError(new AssertionError("empty batch evaluated metadata"))
+          })
+          .processBatch(Chunk.empty[ConsumerRecord[String, String]])(IO.pure("empty"))
         result <- KafkaTracer
           .noop[IO]
           .consumerSpans(new ConsumerMetadata.Provider[IO] {
             override def get: IO[ConsumerMetadata] = IO.raiseError(new AssertionError("noop evaluated metadata"))
           })
           .process(record)(IO.pure("ran"))
+        noopBatch <- KafkaTracer
+          .noop[IO]
+          .consumerSpans(new ConsumerMetadata.Provider[IO] {
+            override def get: IO[ConsumerMetadata] = IO.raiseError(new AssertionError("noop evaluated metadata"))
+          })
+          .processBatch(Chunk.singleton(record))(IO.pure("noop-batch"))
         getCount <- gets.get
         finished <- testkit.finishedSpans
       } yield {
         assertEquals(result, "ran")
+        assertEquals(emptyResult, "empty")
+        assertEquals(noopBatch, "noop-batch")
         assertEquals(getCount, 1)
         assertEquals(
           finished.map(_.getAttributes.get(AttributeKey.stringKey("messaging.client.id"))),
@@ -223,19 +385,25 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
         receiveDisabled = receiveTracer.consumerSpans(provider(ConsumerMetadata(None, None)))
         noop = KafkaTracer.noop[IO].consumerSpans(provider(ConsumerMetadata(None, None)))
         disabledResult <- disabled.process(record)(calls.update(_ + 1).as(42))
+        disabledBatch <- disabled.processBatch(Chunk.singleton(record))(calls.update(_ + 1).as(47))
+        emptyBatch <- disabled.processBatch(Chunk.empty[ConsumerRecord[String, String]])(calls.update(_ + 1).as(48))
         disabledReceive <- receiveDisabled.receive(Chunk.singleton(record))(calls.update(_ + 1).as(44))
         emptyReceive <- disabled.receive(Chunk.empty[ConsumerRecord[String, String]])(calls.update(_ + 1).as(46))
         noopResult <- noop.process(record)(calls.update(_ + 1).as(43))
+        noopBatch <- noop.processBatch(Chunk.singleton(record))(calls.update(_ + 1).as(49))
         noopReceive <- noop.receive(Chunk.singleton(record))(calls.update(_ + 1).as(45))
         count <- calls.get
         spans <- testkit.finishedSpans
       } yield {
         assertEquals(disabledResult, 42)
+        assertEquals(disabledBatch, 47)
+        assertEquals(emptyBatch, 48)
         assertEquals(disabledReceive, 44)
         assertEquals(emptyReceive, 46)
         assertEquals(noopResult, 43)
+        assertEquals(noopBatch, 49)
         assertEquals(noopReceive, 45)
-        assertEquals(count, 5)
+        assertEquals(count, 8)
         assertEquals(spans, Nil)
       }
     }
