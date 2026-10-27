@@ -68,8 +68,15 @@
       find("add-attribute").disabled = state.attributes.length >= 10;
     }
     function spanDetails(container, span) {
-      const parent = span.parent ? currentView.spans.find(s => s.id === span.parent).name : "Root (no parent)";
-      container.append(text("p", `${span.kind} · ${span.scope} · ${span.start * 10}–${(span.start + span.length) * 10} ms · Parent: ${parent}`));
+      const parentSpan = currentView.spans.find(s => s.id === span.parent);
+      const parentContext = currentView.contexts.find(c => c.id === span.parent);
+      const metadata = text("p", `${span.kind} · ${span.scope} · ${span.start * 10}–${(span.start + span.length) * 10} ms · Parent: `);
+      if (parentSpan || parentContext) {
+        const parent = text("a", parentSpan ? parentSpan.name : parentContext.title);
+        parent.href = parentSpan ? `#span-${parentSpan.id}` : `#${parentContext.id}`;
+        metadata.append(parent);
+      } else metadata.append(text("span", "Root (no parent)"));
+      container.append(metadata);
       container.append(text("p", `Setup: ${span.setup}`, "ce-muted"));
       if (span.overridden.length) container.append(text("p", `Constant attributes replace: ${span.overridden.join(", ")}.`, "ce-notice"));
       const detailedLinks = span.links.filter(link => typeof link === "object" && link.attributes.length);
@@ -116,7 +123,7 @@
         item.dataset.spanId = span.id;
         item.id = `span-${span.id}`;
         item.open = expandedIds.has(span.id);
-        if (span.parent) item.classList.add("ce-child");
+        if (span.parent && currentView.spans.some(s => s.id === span.parent)) item.classList.add("ce-child");
 
         const summary = document.createElement("summary");
         summary.className = "ce-span-row";
@@ -133,7 +140,7 @@
             const target = typeof message === "string" ? `incoming-${message}` : message.target;
             const link = text("a", label, "ce-context-link");
             link.href = `#${target}`;
-            link.setAttribute("aria-label", `${label}; span link, not parent`);
+            link.setAttribute("aria-label", `${label}; span link`);
             links.append(link);
           });
         } else links.append(text("span", "None", "ce-muted"));

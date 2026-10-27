@@ -220,9 +220,10 @@ trait TracedKafkaConsumerStreamTracingSyntax {
       * > commit                                       [=======]  withCommitSpanSetup
       * }}}
       *
-      * Span rows are aligned because receive and process spans are independent roots. Bars show timing; widths are
-      * illustrative. Returning `None` from a setup function removes only its span row; handler execution and commit
-      * behavior are unchanged. Indentation is reserved for actual parent-child span relationships.
+      * With the default process relationship, span rows are aligned because receive and process spans are independent
+      * roots. Bars show timing; widths are illustrative. Returning `None` from a setup function removes only its span
+      * row; handler execution and commit behavior are unchanged. Indentation is reserved for actual parent-child span
+      * relationships.
       *
       * See the corresponding [[TracedKafkaConsumer]] method for span relationships and commit ownership.
       */
@@ -259,9 +260,10 @@ trait TracedKafkaConsumerStreamTracingSyntax {
       * > commit                                       [=======]  withCommitSpanSetup
       * }}}
       *
-      * Span rows are aligned because receive and process spans are independent roots. Bars show timing; widths are
-      * illustrative. Returning `None` from a setup function removes only its span row; handler execution and commit
-      * behavior are unchanged. Indentation is reserved for actual parent-child span relationships.
+      * With the default process relationship, span rows are aligned because receive and process spans are independent
+      * roots. Bars show timing; widths are illustrative. Returning `None` from a setup function removes only its span
+      * row; handler execution and commit behavior are unchanged. Indentation is reserved for actual parent-child span
+      * relationships.
       *
       * See the corresponding [[TracedKafkaConsumer]] method for span relationships and commit ownership.
       */
@@ -299,9 +301,10 @@ trait TracedKafkaConsumerStreamTracingSyntax {
       * Results are emitted after each handler; no automatic commit.
       * }}}
       *
-      * Span rows are aligned because receive and process spans are independent roots. Bars show timing; widths are
-      * illustrative. Returning `None` from a setup function removes only its span row; handler execution and commit
-      * behavior are unchanged. Indentation is reserved for actual parent-child span relationships.
+      * With the default process relationship, span rows are aligned because receive and process spans are independent
+      * roots. Bars show timing; widths are illustrative. Returning `None` from a setup function removes only its span
+      * row; handler execution and commit behavior are unchanged. Indentation is reserved for actual parent-child span
+      * relationships.
       *
       * See the corresponding [[TracedKafkaConsumer]] method for span relationships and commit ownership.
       */

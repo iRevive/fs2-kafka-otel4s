@@ -126,7 +126,8 @@ object KafkaTracer {
 
     /** Replaces the function used to derive consumer-side single-record `process` span setup from record metadata.
       *
-      * Return `None` to suppress that single-record process span. For the separate chunk operation, use
+      * Use [[Config.SpanSetup.Process.withRelationship]] to select parenting per record, for example by topic. Return
+      * `None` to suppress that single-record process span. For the separate chunk operation, use
       * [[withBatchProcessSpanSetup]].
       */
     def withProcessSpanSetup(f: ProcessSpanContext => Option[Config.SpanSetup.Process]): Config
@@ -134,7 +135,9 @@ object KafkaTracer {
     /** Replaces setup for the single process span created by [[ConsumerSpans.processBatch]].
       *
       * The context summarizes all records and exposes per-record offset and key only for a singleton chunk. This hook
-      * is independent of [[withProcessSpanSetup]], which configures single-record `process` operations.
+      * is independent of [[withProcessSpanSetup]], which configures single-record `process` operations. Its
+      * [[Config.SpanSetup.Process.relationship]] controls parenting for singleton batches; larger batches remain linked
+      * roots.
       */
     def withBatchProcessSpanSetup(f: BatchProcessSpanContext => Option[Config.SpanSetup.Process]): Config
 
@@ -272,17 +275,26 @@ object KafkaTracer {
           ReceiveImpl(operationSpanName(operation, topic), Attributes.empty, Defaults.spanFinalizationStrategy)
       }
 
-      sealed trait Process extends SpanSetup
+      sealed trait Process extends SpanSetup {
+
+        /** Relationship to propagated message context. Defaults to [[ProcessSpanRelationship.Link]]. */
+        def relationship: ProcessSpanRelationship
+
+        /** Sets parenting for this process span. Multiple-record batches always remain linked roots. */
+        def withRelationship(value: ProcessSpanRelationship): Process
+
+      }
       object Process {
         def apply(
             spanName: String,
             attributes: Attributes,
-            finalizationStrategy: SpanFinalizer.Strategy
+            finalizationStrategy: SpanFinalizer.Strategy,
+            relationship: ProcessSpanRelationship = ProcessSpanRelationship.Link
         ): Process =
-          ProcessImpl(spanName, attributes, finalizationStrategy)
+          ProcessImpl(spanName, attributes, finalizationStrategy, relationship)
 
         private[KafkaTracer] def apply(operation: String, topic: Option[String]): Process =
-          ProcessImpl(operationSpanName(operation, topic), Attributes.empty, Defaults.spanFinalizationStrategy)
+          apply(operationSpanName(operation, topic), Attributes.empty, Defaults.spanFinalizationStrategy)
       }
 
       sealed trait Commit extends SpanSetup
@@ -316,8 +328,14 @@ object KafkaTracer {
       final private case class ProcessImpl(
           spanName: String,
           attributes: Attributes,
-          finalizationStrategy: SpanFinalizer.Strategy
-      ) extends Process
+          finalizationStrategy: SpanFinalizer.Strategy,
+          relationship: ProcessSpanRelationship
+      ) extends Process {
+
+        override def withRelationship(value: ProcessSpanRelationship): Process =
+          copy(relationship = value)
+
+      }
 
       final private case class CommitImpl(
           spanName: String,

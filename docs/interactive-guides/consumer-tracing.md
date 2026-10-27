@@ -3,7 +3,8 @@
 Choose tracing options, inspect the spans, and copy the Scala example.
 Disabling spans keeps processing and commits enabled.
 
-The example uses three messages in one partition, with no active application span.
+Choose one or three messages in one partition. There is no active application span; the consume helpers keep a
+receive span active while processing when receive tracing is enabled.
 
 ## Configure your consumer
 
@@ -12,6 +13,8 @@ The example uses three messages in one partition, with no active application spa
     <fieldset class="ce-controls">
       <legend>Consumer and tracing</legend>
       <label>Consumer API <select data-option="method"><option value="record">consumeRecordTraced</option><option value="chunk">consumeChunkTraced</option><option value="stream">recordsTraced</option></select></label>
+      <label>Process relationship <select data-option="relationship"><option value="Link">Link (default)</option><option value="ParentFromRecord">ParentFromRecord</option></select></label>
+      <label>Messages per chunk <select data-option="count"><option value="1">1</option><option value="3" selected>3</option></select></label>
       <label>Topic <input data-option="topic" value="orders"></label>
       <label>Client ID <input data-option="clientId" value="orders-consumer"></label>
       <label>Group ID <input data-option="groupId" value="orders-group"></label>
@@ -19,7 +22,7 @@ The example uses three messages in one partition, with no active application spa
         <label><input type="checkbox" data-option="receive" checked> Receive span</label>
         <label><input type="checkbox" data-option="process" checked> <span data-process-label>Record process spans</span></label>
         <label data-commit-control><input type="checkbox" data-option="commit" checked> Commit span</label>
-        <label data-children-control><input type="checkbox" data-option="children"> Child process span per message</label>
+        <label><input type="checkbox" data-option="children"> Application span per message</label>
         <label><input type="checkbox" data-option="incoming" checked> Incoming trace headers</label>
       </div>
     </fieldset>
@@ -50,7 +53,8 @@ Expand a span to see its attributes and parent. Follow a link to see the message
 
 ### Incoming message contexts
 
-Consumer spans link to these contexts. Each linked consumer span starts its own trace.
+Consumer spans retain links to these contexts in both relationship modes. With `ParentFromRecord`, single-record
+and singleton batch process spans also use the corresponding context as parent, continuing its trace.
 
 <div class="tracing-explorer ce-contexts" data-explorer-panel data-contexts hidden></div>
 
@@ -105,9 +109,39 @@ val manualRecordConfig =
 
 `KafkaTracer.noop` disables both spans and propagation.
 
+## Choose a process relationship
+
+`Link` creates linked roots. `ParentFromRecord` continues the message trace for single-record processing and
+singleton batches, retaining message links. Missing or invalid headers produce a root; multiple-record batches
+remain linked roots.
+
+```scala mdoc:silent
+import fs2.kafka.otel4s.trace.ProcessSpanRelationship
+
+val parentedProcessingConfig =
+  KafkaTracer.Config.default
+    .withProcessSpanSetup { ctx =>
+      KafkaTracer.Config.Defaults.processSpanSetup(ctx)
+        .map(_.withRelationship(ProcessSpanRelationship.ParentFromRecord))
+    }
+```
+
+Set the relationship on the setup returned by `withProcessSpanSetup`, or independently by
+`withBatchProcessSpanSetup` for chunk processing. The setup can choose a relationship per topic or other metadata.
+
+Parented spans also link to an active receive span. With `recordsTraced`, receive has already ended.
+Receive and commit behavior stays the same.
+
+Try `ParentFromRecord` with `consumeChunkTraced`, then switch between one and three messages to compare parenting.
+
 ## Add child spans around selected work
 
-A chunk handler can select records before processing. This example keeps the latest record per key
+Enable “Application span per message” with any consumer API to wrap each handler in an application span.
+With record APIs, each application span is a child of its library process span. With the chunk API,
+application spans are children of the batch process span. They inherit its trace, including when the process
+span uses `ParentFromRecord`.
+
+A chunk handler can also select records before processing. This example keeps the latest record per key
 and adds an application span for each selected record:
 
 ```scala mdoc:silent
@@ -126,31 +160,53 @@ def consumeSelected(
 )(implicit tracer: Tracer[IO]): IO[Nothing] =
   consumer.consumeChunkTraced { chunk =>
     selectLatest(chunk).traverse_ { record =>
-      Tracer[IO].span("process").surround(handle(record))
+      Tracer[IO].span("handle order").surround(handle(record))
     }.as(CommitNow)
   }
 ```
 
-Enable “Child process span per message” to see the result. The demo processes all three messages.
-Selecting fewer records creates fewer child spans.
+The demo processes every message in the selected chunk. Selecting fewer records in a chunk handler creates
+fewer child spans. The record API examples wrap handlers in the same way:
 
-`consumer.spans.process(record)(effect)` creates a root span linked to the message context.
+```scala mdoc:silent
+def consumeWithChildren(
+    consumer: TracedKafkaConsumer[IO, String, String],
+    handle: ConsumerRecord[String, String] => IO[Unit]
+)(implicit tracer: Tracer[IO]): IO[Nothing] =
+  consumer.consumeRecordTraced { record =>
+    tracer.span("handle order").surround(handle(record))
+  }
+
+def recordsWithChildren(
+    consumer: TracedKafkaConsumer[IO, String, String],
+    handle: ConsumerRecord[String, String] => IO[Unit]
+)(implicit tracer: Tracer[IO]): fs2.Stream[IO, fs2.kafka.CommittableOffset[IO]] =
+  consumer.recordsTraced { committable =>
+    tracer.span("handle order").surround(handle(committable.record)).as(committable.offset)
+  }
+```
+
+`consumer.spans.process(record)(effect)` follows the configured process relationship and retains its message link.
 It uses `withProcessSpanSetup`. The chunk handler still commits the original chunk after success.
 
 ## Read the relationships
 
-| Span | Parent in this example | Message links |
+| Span | Parent in this example | Links |
 | --- | --- | --- |
 | Receive | None | All recognized contexts in the chunk |
-| Record process | None | Its message context |
-| Batch process | None | All recognized contexts in the chunk |
-| Application child | Batch process, or receive if batch tracing is disabled | None |
+| Record process | None with `Link`; message context with `ParentFromRecord` | Its message context, plus the ambient receive span when parented inside it |
+| Batch process | None, except singleton batches with `ParentFromRecord` | All recognized contexts, plus the ambient receive span when parented inside it |
+| Application child | Record or batch process; otherwise the active receive span, if any | None |
 | Commit | None | None |
 
-If both batch process and receive are disabled, application spans are roots.
-Turning off incoming headers removes message links. It does not change the generated consumer code.
+If process tracing is disabled, application spans are children of receive in the consume helpers when receive
+tracing is enabled. With `recordsTraced`, receive has already ended, so application spans become roots.
+If both process and receive tracing are disabled, application spans are roots.
+Turning off incoming headers removes message links and makes process spans roots in both modes.
+It does not change the generated consumer code.
 
-The stream example commits batches of three offsets. Actual timing and batch sizes depend on your application.
+The stream example commits batches of one or three offsets, matching the selected message count.
+Actual timing and batch sizes depend on your application.
 
 Constant attributes can replace derived attributes. Span names and links stay the same.
 Selections are saved in the URL. Keep secrets out of shared attribute values.
