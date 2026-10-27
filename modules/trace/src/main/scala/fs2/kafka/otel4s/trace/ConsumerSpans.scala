@@ -27,7 +27,7 @@ import fs2.kafka.otel4s.trace.internal.Semconv
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
 import org.apache.kafka.common.TopicPartition
 import org.typelevel.otel4s.Attributes
-import org.typelevel.otel4s.trace.{SpanContext, SpanKind, Tracer}
+import org.typelevel.otel4s.trace.{SpanBuilder, SpanContext, SpanKind, Tracer}
 
 import scala.util.chaining._
 import scala.concurrent.duration.FiniteDuration
@@ -55,12 +55,14 @@ import scala.concurrent.duration.FiniteDuration
   * Later values override earlier values with the same key. [[KafkaTracer.Config.withServerAddress]] contributes
   * constant broker address attributes. Attribute overrides do not change the metadata passed to setup functions.
   *
-  * Setup functions do not change span kind, parenting, or links. Process spans remain consumer roots linked to
-  * recognized contexts from record headers; receive spans remain client roots linked to contexts from each record in
-  * the chunk. [[KafkaTracer.Config.withBatchSpanMode]] controls producer batches and does not affect `processBatch`.
-  * Commit spans have kind `Client` and are always roots, independent of the active span. Send setup options only affect
-  * producers. The primitive methods trace supplied effects without calling a committer; the companion's
-  * `commitBatchWithin` extension batches offsets and traces the resulting commit calls.
+  * Setup functions do not change span kind or message links. Process spans are consumer roots linked to recognized
+  * contexts from record headers by default. [[KafkaTracer.Config.SpanSetup.Process.relationship]] can make
+  * single-record and singleton batch process spans children of the message context while retaining links. Receive spans
+  * remain client roots linked to contexts from each record in the chunk. [[KafkaTracer.Config.withBatchSpanMode]]
+  * controls producer batches and does not affect `processBatch`. Commit spans have kind `Client` and are always roots,
+  * independent of the active span. Send setup options only affect producers. The primitive methods trace supplied
+  * effects without calling a committer; the companion's `commitBatchWithin` extension batches offsets and traces the
+  * resulting commit calls.
   *
   * Empty receive and process batches and offset maps evaluate the effect without metadata lookup, setup evaluation, or
   * span creation. Handles obtained from [[KafkaTracer.noop]] also evaluate effects directly, without metadata lookup or
@@ -112,7 +114,9 @@ sealed trait ConsumerSpans[F[_]] {
     */
   def process[K: KafkaMessageKey, V, A](record: CommittableConsumerRecord[F, K, V])(fa: F[A]): F[A]
 
-  /** Evaluates `fa` inside one root process span linked to every recognized context in the chunk.
+  /** Evaluates `fa` inside one process span linked to every recognized context in the chunk.
+    *
+    * Multiple-record batches are roots. Singleton batches follow [[KafkaTracer.Config.SpanSetup.Process.relationship]].
     *
     * Empty chunks evaluate `fa` directly without metadata lookup or span setup. Nonempty chunks use
     * [[KafkaTracer.Config.withBatchProcessSpanSetup]], independently of single-record process setup.
@@ -274,16 +278,11 @@ object ConsumerSpans {
       metadata.get.flatMap { resolved =>
         val context = Semconv.processSpanContext(record, resolved.clientId, resolved.groupId)
         config.processSpanSetup(context).fold(fa) { setup =>
-          recordTraceContextLinks(record :: Nil).flatMap { links =>
-            Tracer[F]
-              .spanBuilder(setup.spanName)
-              .root
+          processSpanBuilder(setup, record :: Nil).flatMap { builder =>
+            builder
               .withSpanKind(SpanKind.Consumer)
               .withFinalizationStrategy(setup.finalizationStrategy)
               .addAttributes(Semconv.processAttributes(context, record) ++ config.constAttributes ++ setup.attributes)
-              .pipe { builder =>
-                links.foldLeft(builder) { case (acc, (context, attributes)) => acc.addLink(context, attributes) }
-              }
               .build
               .surround(fa)
           }
@@ -296,18 +295,13 @@ object ConsumerSpans {
         metadata.get.flatMap { resolved =>
           val context = Semconv.batchProcessSpanContext(records, resolved.clientId, resolved.groupId)
           config.batchProcessSpanSetup(context).fold(fa) { setup =>
-            recordTraceContextLinks(records.toList).flatMap { links =>
-              Tracer[F]
-                .spanBuilder(setup.spanName)
-                .root
+            processSpanBuilder(setup, records.toList).flatMap { builder =>
+              builder
                 .withSpanKind(SpanKind.Consumer)
                 .withFinalizationStrategy(setup.finalizationStrategy)
                 .addAttributes(
                   Semconv.batchProcessAttributes(context, records) ++ config.constAttributes ++ setup.attributes
                 )
-                .pipe { builder =>
-                  links.foldLeft(builder) { case (acc, (context, attributes)) => acc.addLink(context, attributes) }
-                }
                 .build
                 .surround(fa)
             }
@@ -343,6 +337,30 @@ object ConsumerSpans {
           .addAttributes(attributes ++ config.constAttributes ++ setup.attributes)
           .build
           .surround(fa)
+      }
+
+    private def processSpanBuilder[K: KafkaMessageKey, V](
+        setup: KafkaTracer.Config.SpanSetup.Process,
+        records: List[ConsumerRecord[K, V]]
+    ): F[SpanBuilder[F]] =
+      for {
+        ambient <- Tracer[F].currentSpanContext
+        links <- recordTraceContextLinks(records)
+      } yield {
+        val linked = links.foldLeft(Tracer[F].spanBuilder(setup.spanName).root) {
+          case (builder, (context, attributes)) =>
+            builder.addLink(context, attributes)
+        }
+        if (setup.relationship == ProcessSpanRelationship.ParentFromRecord && records.size == 1)
+          links.headOption.fold(linked) { case (parent, _) =>
+            val parented = linked.withParent(parent)
+            ambient
+              .filter { context =>
+                context.isValid && (context.traceId != parent.traceId || context.spanId != parent.spanId)
+              }
+              .fold(parented)(context => parented.addLink(context))
+          }
+        else linked
       }
 
     private def recordTraceContextLinks[K: KafkaMessageKey, V](

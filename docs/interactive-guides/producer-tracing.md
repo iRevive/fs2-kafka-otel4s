@@ -93,6 +93,11 @@ The code uses `.flatten` to submit records and wait for acknowledgment.
 Constant attributes apply to library spans. They do not change names, outgoing contexts, or link attributes.
 Single-record results add the partition and offset after acknowledgment, replacing matching constant attributes.
 
+The context in each outgoing record can become a consumer process span's parent with
+`.withRelationship(ProcessSpanRelationship.ParentFromRecord)` on the consumer's process span setup.
+This preserves message links and applies to single-record processing and singleton process batches. Explore both modes in the
+[Consumer tracing configurator](consumer-tracing.md).
+
 For mixed topics, partitions, and other rules, see [Producer instrumentation](../reference/producer-instrumentation.md).
 For shared options, see [Configuration](../getting-started/configuration.md).
 

@@ -125,19 +125,19 @@ def consumeWithChildSpans(
     .traced(tracerConfig)
     .consumeChunkTraced { chunk =>
       chunk.traverse_ { record =>
-        Tracer[IO].span("process").surround(handle(record))
+        Tracer[IO].span("handle order").surround(handle(record))
       }.as(CommitNow)
     }
 ```
 
-Each application `process` span is a child of the batch process span:
+Each application `handle order` span is a child of the batch process span:
 
 ```text
   receive
   process batch
-    process (m1)    child of process batch
-    process (m2)    child of process batch
-    process (m3)    child of process batch
+    handle order (m1)    child of process batch
+    handle order (m2)    child of process batch
+    handle order (m3)    child of process batch
   commit
 
 Indentation means parent-child; aligned rows are independent roots.
@@ -195,9 +195,9 @@ The standard `fs2.kafka.commitBatchWithin` pipe also works but adds no commit sp
 
 Offset-only commits report topics and partitions, without record counts or details.
 
-### Incoming trace headers: links, not parents
+### Incoming trace headers
 
-Receive and process spans link to trace contexts found in message headers. They remain separate roots.
+By default, receive and process spans link to trace contexts found in message headers. They remain separate roots.
 For one message `m1` carrying context `S`:
 
 ```text
@@ -217,11 +217,18 @@ Each span shown here is a separate root. Dashed arrows are links, not parent-chi
 Without recognized headers, receive and process spans still start new traces.
 Your tracing backend must support span links to display these connections.
 
+To continue the producer trace during processing, return a process setup with
+`.withRelationship(ProcessSpanRelationship.ParentFromRecord)` from `withProcessSpanSetup` or
+`withBatchProcessSpanSetup`. Single-record processing and singleton
+process batches then use the message context as parent and retain the message link. A distinct ambient context is
+also linked. Missing or invalid headers still produce a root; batches with multiple records remain linked roots.
+Receive and commit behavior is unchanged. See [Configuration](configuration.md#process-span-relationships).
+
 ## Trace only selected work in a chunk
 
 Selecting records in a chunk callback still commits the original chunk's offsets after success.
 
-To trace selected records as roots, call `consumer.spans.process(record)(effect)`.
+To trace selected records with the configured process relationship, call `consumer.spans.process(record)(effect)`.
 Disable the batch process span with `withBatchProcessSpanSetup(_ => None)` if you only want those record spans.
 
 See [Configuration](configuration.md) for span setup options and the [Low-level API](../reference/low-level-api.md) for explicit operation handles.

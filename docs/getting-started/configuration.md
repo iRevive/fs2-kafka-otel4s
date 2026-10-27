@@ -4,7 +4,7 @@ Pass `KafkaTracer.Config.default` to `.traced(config)` to start. This creates on
 To reuse a tracer, pass it to `.traced(kafkaTracer)`.
 
 ```scala mdoc:silent
-import fs2.kafka.otel4s.trace.{BatchSpanMode, KafkaTracer}
+import fs2.kafka.otel4s.trace.{BatchSpanMode, KafkaTracer, ProcessSpanRelationship}
 
 val tracerConfig: KafkaTracer.Config =
   KafkaTracer.Config
@@ -33,6 +33,29 @@ val processingOnlyConfig: KafkaTracer.Config =
 Disabling spans still runs your effects. Use `KafkaTracer.noop` to disable both spans and header propagation.
 
 Set client and group IDs in Kafka settings. Set tracing options in `KafkaTracer.Config`.
+
+## Process span relationships
+
+Set `SpanSetup.Process.relationship` through either process setup hook:
+
+| Mode | Behavior |
+| --- | --- |
+| `Link` (default) | Start a root span and link to message context |
+| `ParentFromRecord` | Use message context as parent, retaining the message link and linking any distinct valid ambient context |
+
+```scala mdoc:silent
+val perTopicConfig = tracerConfig.withProcessSpanSetup { ctx =>
+  KafkaTracer.Config.Defaults.processSpanSetup(ctx).map { setup =>
+    if (ctx.topic == "orders") setup.withRelationship(ProcessSpanRelationship.ParentFromRecord)
+    else setup
+  }
+}
+```
+
+Use `withBatchProcessSpanSetup` independently for batch processing, with
+`KafkaTracer.Config.Defaults.batchProcessSpanSetup(ctx)` as the starting point.
+Parenting applies to single-record processing and singleton batches. Missing or invalid context produces a root;
+multiple-record batches remain linked roots. Receive and commit behavior stays the same.
 
 ## Custom message keys
 
