@@ -187,8 +187,13 @@ final class KafkaTracingErrorSuite extends KafkaTracingTestSupport {
             assertEquals(produced, Chunk.empty)
             assertEquals(startedNames.sorted, List("create topic-a", "create topic-b"))
             assertEquals(endedNames.sorted, startedNames.sorted)
-            assertEquals(spans.map(_.getName).sorted, startedNames.sorted)
-            assert(!spans.exists(_.getName.startsWith("send")))
+            assertExpected(
+              spans,
+              TraceForestExpectation.unordered(
+                root(SpanExpectation.producer("create topic-a")),
+                root(SpanExpectation.producer("create topic-b"))
+              )
+            )
           }
         } yield ()
       }
