@@ -16,6 +16,7 @@
 
 package fs2.kafka.otel4s.trace
 
+import java.util.{Collection, Collections}
 import io.opentelemetry.api.trace.{
   Span => OtelSpan,
   SpanContext => OtelSpanContext,
@@ -29,8 +30,8 @@ object CustomTraceContextPropagator extends TextMapPropagator {
 
   val customPropagationHeader = "x-custom-trace"
 
-  override def fields(): java.util.Collection[String] =
-    java.util.Collections.singleton(customPropagationHeader)
+  override def fields(): Collection[String] =
+    Collections.singleton(customPropagationHeader)
 
   override def inject[C](context: Context, carrier: C, setter: TextMapSetter[C]): Unit = {
     val spanContext = OtelSpan.fromContext(context).getSpanContext

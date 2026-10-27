@@ -47,7 +47,7 @@ The diagrams show one chunk with all spans enabled and no active application spa
 
 - Receive, process, and commit are separate root spans. Each starts a trace.
 - Incoming message contexts are attached as span links.
-- Commit uses the active application span as its parent, if one exists.
+- Commit spans are always roots, independent of any active application span.
 - Bars show span lifetimes. The receive span is named `poll <topic>`.
 
 ### Per-record handler

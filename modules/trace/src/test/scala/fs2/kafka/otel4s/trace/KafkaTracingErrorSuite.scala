@@ -27,7 +27,8 @@ import io.opentelemetry.sdk.trace.{ReadWriteSpan, ReadableSpan, SpanProcessor}
 import org.typelevel.otel4s.oteljava.testkit.trace.{SpanExpectation, StatusExpectation, TraceForestExpectation}
 import org.typelevel.otel4s.semconv.attributes.ErrorAttributes
 
-import java.util.Collections
+import java.util.{Collection, Collections}
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.ConcurrentLinkedQueue
 
 import scala.jdk.CollectionConverters._
@@ -205,9 +206,9 @@ object KafkaTracingErrorSuite {
 
   final class FailingOnNthInjectPropagator(failOn: Int) extends TextMapPropagator {
 
-    private val counter = new java.util.concurrent.atomic.AtomicInteger(0)
+    private val counter = new AtomicInteger(0)
 
-    override def fields(): java.util.Collection[String] =
+    override def fields(): Collection[String] =
       Collections.singletonList("x-failing-propagation")
 
     override def inject[C](context: Context, carrier: C, setter: TextMapSetter[C]): Unit = {

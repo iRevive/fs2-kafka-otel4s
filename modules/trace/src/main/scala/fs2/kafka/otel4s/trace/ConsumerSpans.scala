@@ -58,9 +58,9 @@ import scala.concurrent.duration.FiniteDuration
   * Setup functions do not change span kind, parenting, or links. Process spans remain consumer roots linked to
   * recognized contexts from record headers; receive spans remain client roots linked to contexts from each record in
   * the chunk. [[KafkaTracer.Config.withBatchSpanMode]] controls producer batches and does not affect `processBatch`.
-  * Commit spans have kind `Client` and use the active span as parent, or are roots when no span is active. Send setup
-  * options only affect producers. The primitive methods trace supplied effects without calling a committer; the
-  * companion's `commitBatchWithin` extension batches offsets and traces the resulting commit calls.
+  * Commit spans have kind `Client` and are always roots, independent of the active span. Send setup options only affect
+  * producers. The primitive methods trace supplied effects without calling a committer; the companion's
+  * `commitBatchWithin` extension batches offsets and traces the resulting commit calls.
   *
   * Empty receive and process batches and offset maps evaluate the effect without metadata lookup, setup evaluation, or
   * span creation. Handles obtained from [[KafkaTracer.noop]] also evaluate effects directly, without metadata lookup or
@@ -185,7 +185,7 @@ sealed trait ConsumerSpans[F[_]] {
     *
     * Supply the actual commit effect as `fa`. The map provides topics and partitions; it cannot tell us the record
     * count, record offsets, keys, tombstones, or message links. Empty maps run `fa` without a span or metadata lookup.
-    * The active span becomes the commit span's parent. Without an active span, the commit span is a root.
+    * Commit spans are always roots, independent of the active span.
     */
   def commitOffsets[A](offsets: Map[TopicPartition, OffsetAndMetadata])(fa: F[A]): F[A]
 
@@ -198,8 +198,9 @@ object ConsumerSpans {
     * A batch is committed when it reaches `n` offsets or `d` elapses, following `fs2-kafka`'s `commitBatchWithin`
     * behavior. Each original committer receives its own span-wrapped commit call. The wait for a batch does not have a
     * span. Offset notifications do not reveal a safe record count, so commit spans keep `recordCount` unknown. Use
-    * offsets produced by the consumer described by this handle's metadata. Each commit span uses the context active
-    * when its commit call runs. The no-op handle and disabled commit setup still commit offsets normally.
+    * offsets produced by the consumer described by this handle's metadata. Each commit span is a root, independent of
+    * the active span when its commit call runs. The no-op handle and disabled commit setup still commit offsets
+    * normally.
     *
     * This is an explicit traced pipe. The upstream `fs2.kafka.commitBatchWithin` remains available and does not add
     * tracing by itself.
@@ -336,6 +337,7 @@ object ConsumerSpans {
       config.commitSpanSetup(context).fold(fa) { setup =>
         Tracer[F]
           .spanBuilder(setup.spanName)
+          .root
           .withSpanKind(SpanKind.Client)
           .withFinalizationStrategy(setup.finalizationStrategy)
           .addAttributes(attributes ++ config.constAttributes ++ setup.attributes)

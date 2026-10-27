@@ -145,7 +145,7 @@ object KafkaTracer {
       * `recordCount`, `messageKey`, and `offset` in [[CommitSpanContext]] because only commit positions are available.
       * Return `None` to run the commit effect without a span.
       *
-      * The active span becomes the commit span's parent. Without an active span, the commit span is a root.
+      * Commit spans are always roots, independent of the active span.
       */
     def withCommitSpanSetup(f: CommitSpanContext => Option[Config.SpanSetup.Commit]): Config
 
