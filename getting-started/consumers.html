@@ -175,7 +175,7 @@
         <ul>
           <li>Receive, process, and commit are separate root spans. Each starts a trace.</li>
           <li>Incoming message contexts are attached as span links.</li>
-          <li>Commit uses the active application span as its parent, if one exists.</li>
+          <li>Commit spans are always roots, independent of any active application span.</li>
           <li>Bars show span lifetimes. The receive span is named <code>poll &lt;topic&gt;</code>.</li>
         </ul>
         

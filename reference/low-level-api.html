@@ -171,10 +171,9 @@ spans.receiveCommittable(records)(effect)     receive          withReceiveSpanSe
         <ul>
           <li>Topics being committed.</li>
           <li>A partition when the map has exactly one topic-partition entry.</li>
-          <li>The active span as parent, if one exists. Otherwise, the commit span is a root.</li>
+          <li>An independent root context, even when an application span is active.</li>
         </ul>
-        <p>Offset-only commits have no record counts, record details, or message links.
-        They use the context active at commit time.</p>
+        <p>Offset-only commits have no record counts, record details, or message links.</p>
         <p><code>kafkaTracer.consumerSpans(metadata).commitBatchWithin</code> traces each commit call.
         The standard <code>fs2.kafka.commitBatchWithin</code> adds no spans.</p>
         
