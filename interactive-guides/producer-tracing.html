@@ -219,6 +219,10 @@
         <code>KafkaTracer.noop</code> disables all spans and propagation.</p>
         <p>Constant attributes apply to library spans. They do not change names, outgoing contexts, or link attributes.
         Single-record results add the partition and offset after acknowledgment, replacing matching constant attributes.</p>
+        <p>The context in each outgoing record can become a consumer process span&#39;s parent with
+        <code>.withRelationship(ProcessSpanRelationship.ParentFromRecord)</code> on the consumer&#39;s process span setup.
+        This preserves message links and applies to single-record processing and singleton process batches. Explore both modes in the
+        <a href="consumer-tracing.html">Consumer tracing configurator</a>.</p>
         <p>For mixed topics, partitions, and other rules, see <a href="../reference/producer-instrumentation.html">Producer instrumentation</a>.
         For shared options, see <a href="../getting-started/configuration.html">Configuration</a>.</p>
         <p>Selections are saved in the URL. Keep secrets out of shared attribute values.</p>

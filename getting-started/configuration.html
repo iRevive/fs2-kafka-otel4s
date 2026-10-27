@@ -98,6 +98,7 @@
   <p class="header"><a href="#">Configuration</a></p>
 
   <ul class="nav-list">
+    <li class="level1 nav-leaf"><a href="#process-span-relationships">Process span relationships</a></li>
     <li class="level1 nav-leaf"><a href="#custom-message-keys">Custom message keys</a></li>
     <li class="level1 nav-leaf"><a href="#resource-binding-and-tracer-reuse">Resource binding and tracer reuse</a></li>
   </ul>
@@ -111,7 +112,7 @@
         <h1 id="configuration" class="title">Configuration</h1>
         <p>Pass <code>KafkaTracer.Config.default</code> to <code>.traced(config)</code> to start. This creates one tracer per stream evaluation.
         To reuse a tracer, pass it to <code>.traced(kafkaTracer)</code>.</p>
-        <pre class="keep-together pdf epub"><code class="nohighlight"><span class="keyword">import</span><span> </span><span class="identifier">fs2</span><span>.</span><span class="identifier">kafka</span><span>.</span><span class="identifier">otel4s</span><span>.</span><span class="identifier">trace</span><span>.{</span><span class="type-name">BatchSpanMode</span><span>, </span><span class="type-name">KafkaTracer</span><span>}
+        <pre class="keep-together pdf epub"><code class="nohighlight"><span class="keyword">import</span><span> </span><span class="identifier">fs2</span><span>.</span><span class="identifier">kafka</span><span>.</span><span class="identifier">otel4s</span><span>.</span><span class="identifier">trace</span><span>.{</span><span class="type-name">BatchSpanMode</span><span>, </span><span class="type-name">KafkaTracer</span><span>, </span><span class="type-name">ProcessSpanRelationship</span><span>}
 
 </span><span class="keyword">val</span><span> </span><span class="identifier">tracerConfig</span><span>: </span><span class="type-name">KafkaTracer</span><span>.</span><span class="type-name">Config</span><span> =
   </span><span class="type-name">KafkaTracer</span><span>.</span><span class="type-name">Config</span><span>
@@ -161,6 +162,37 @@
         <code>withoutProcessSpans</code> disables both.</p>
         <p>Disabling spans still runs your effects. Use <code>KafkaTracer.noop</code> to disable both spans and header propagation.</p>
         <p>Set client and group IDs in Kafka settings. Set tracing options in <code>KafkaTracer.Config</code>.</p>
+        
+        <h2 id="process-span-relationships" class="section"><a class="anchor-link left" href="#process-span-relationships"><i class="icofont-laika link">&#xef71;</i></a>Process span relationships</h2>
+        <p>Set <code>SpanSetup.Process.relationship</code> through either process setup hook:</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Mode</th>
+              <th>Behavior</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Link</code> (default)</td>
+              <td>Start a root span and link to message context</td>
+            </tr>
+            <tr>
+              <td><code>ParentFromRecord</code></td>
+              <td>Use message context as parent, retaining the message link and linking any distinct valid ambient context</td>
+            </tr>
+          </tbody>
+        </table>
+        <pre class="keep-together pdf epub"><code class="nohighlight"><span class="keyword">val</span><span> </span><span class="identifier">perTopicConfig</span><span> = </span><span class="identifier">tracerConfig</span><span>.</span><span class="identifier">withProcessSpanSetup</span><span> { </span><span class="identifier">ctx</span><span> =&gt;
+  </span><span class="type-name">KafkaTracer</span><span>.</span><span class="type-name">Config</span><span>.</span><span class="type-name">Defaults</span><span>.</span><span class="identifier">processSpanSetup</span><span>(</span><span class="identifier">ctx</span><span>).</span><span class="identifier">map</span><span> { </span><span class="identifier">setup</span><span> =&gt;
+    </span><span class="keyword">if</span><span> (</span><span class="identifier">ctx</span><span>.</span><span class="identifier">topic</span><span> == </span><span class="string-literal">&quot;orders&quot;</span><span>) </span><span class="identifier">setup</span><span>.</span><span class="identifier">withRelationship</span><span>(</span><span class="type-name">ProcessSpanRelationship</span><span>.</span><span class="type-name">ParentFromRecord</span><span>)
+    </span><span class="keyword">else</span><span> </span><span class="identifier">setup</span><span>
+  }
+}</span></code></pre>
+        <p>Use <code>withBatchProcessSpanSetup</code> independently for batch processing, with
+        <code>KafkaTracer.Config.Defaults.batchProcessSpanSetup(ctx)</code> as the starting point.
+        Parenting applies to single-record processing and singleton batches. Missing or invalid context produces a root;
+        multiple-record batches remain linked roots. Receive and commit behavior stays the same.</p>
         
         <h2 id="custom-message-keys" class="section"><a class="anchor-link left" href="#custom-message-keys"><i class="icofont-laika link">&#xef71;</i></a>Custom message keys</h2>
         <p>Define <code>KafkaMessageKey</code> to include custom keys in <code>messaging.kafka.message.key</code>. Return <code>None</code> to omit a key.</p>

@@ -104,7 +104,7 @@
     <li class="level2 nav-leaf"><a href="#per-record-handler">Per-record handler</a></li>
     <li class="level2 nav-leaf"><a href="#chunk-handler">Chunk handler</a></li>
     <li class="level2 nav-leaf"><a href="#stream-results-and-batch-commits">Stream results and batch commits</a></li>
-    <li class="level2 nav-leaf"><a href="#incoming-trace-headers-links-not-parents">Incoming trace headers: links, not parents</a></li>
+    <li class="level2 nav-leaf"><a href="#incoming-trace-headers">Incoming trace headers</a></li>
     <li class="level1 nav-leaf"><a href="#trace-only-selected-work-in-a-chunk">Trace only selected work in a chunk</a></li>
   </ul>
 
@@ -240,15 +240,15 @@ Span lifetime                                             Controlled by
     .</span><span class="identifier">traced</span><span>(</span><span class="identifier">tracerConfig</span><span>)
     .</span><span class="identifier">consumeChunkTraced</span><span> { </span><span class="identifier">chunk</span><span> =&gt;
       </span><span class="identifier">chunk</span><span>.</span><span class="identifier">traverse_</span><span> { </span><span class="identifier">record</span><span> =&gt;
-        </span><span class="type-name">Tracer</span><span>[</span><span class="type-name">IO</span><span>].</span><span class="identifier">span</span><span>(</span><span class="string-literal">&quot;process&quot;</span><span>).</span><span class="identifier">surround</span><span>(</span><span class="identifier">handle</span><span>(</span><span class="identifier">record</span><span>))
+        </span><span class="type-name">Tracer</span><span>[</span><span class="type-name">IO</span><span>].</span><span class="identifier">span</span><span>(</span><span class="string-literal">&quot;handle order&quot;</span><span>).</span><span class="identifier">surround</span><span>(</span><span class="identifier">handle</span><span>(</span><span class="identifier">record</span><span>))
       }.</span><span class="identifier">as</span><span>(</span><span class="type-name">CommitNow</span><span>)
     }</span></code></pre>
-        <p>Each application <code>process</code> span is a child of the batch process span:</p>
+        <p>Each application <code>handle order</code> span is a child of the batch process span:</p>
         <pre class="keep-together pdf epub"><code class="text">  receive
   process batch
-    process (m1)    child of process batch
-    process (m2)    child of process batch
-    process (m3)    child of process batch
+    handle order (m1)    child of process batch
+    handle order (m2)    child of process batch
+    handle order (m3)    child of process batch
   commit
 
 Indentation means parent-child; aligned rows are independent roots.</code></pre>
@@ -294,8 +294,8 @@ Results are emitted after each handler; no automatic commit.</code></pre>
         The standard <code>fs2.kafka.commitBatchWithin</code> pipe also works but adds no commit spans.</p>
         <p>Offset-only commits report topics and partitions, without record counts or details.</p>
         
-        <h3 id="incoming-trace-headers-links-not-parents" class="section"><a class="anchor-link left" href="#incoming-trace-headers-links-not-parents"><i class="icofont-laika link">&#xef71;</i></a>Incoming trace headers: links, not parents</h3>
-        <p>Receive and process spans link to trace contexts found in message headers. They remain separate roots.
+        <h3 id="incoming-trace-headers" class="section"><a class="anchor-link left" href="#incoming-trace-headers"><i class="icofont-laika link">&#xef71;</i></a>Incoming trace headers</h3>
+        <p>By default, receive and process spans link to trace contexts found in message headers. They remain separate roots.
         For one message <code>m1</code> carrying context <code>S</code>:</p>
         <pre class="keep-together pdf epub"><code class="text">Consumer spans                         Context carried by m1
 
@@ -311,10 +311,16 @@ Each span shown here is a separate root. Dashed arrows are links, not parent-chi
         </ul>
         <p>Without recognized headers, receive and process spans still start new traces.
         Your tracing backend must support span links to display these connections.</p>
+        <p>To continue the producer trace during processing, return a process setup with
+        <code>.withRelationship(ProcessSpanRelationship.ParentFromRecord)</code> from <code>withProcessSpanSetup</code> or
+        <code>withBatchProcessSpanSetup</code>. Single-record processing and singleton
+        process batches then use the message context as parent and retain the message link. A distinct ambient context is
+        also linked. Missing or invalid headers still produce a root; batches with multiple records remain linked roots.
+        Receive and commit behavior is unchanged. See <a href="configuration.html#process-span-relationships">Configuration</a>.</p>
         
         <h2 id="trace-only-selected-work-in-a-chunk" class="section"><a class="anchor-link left" href="#trace-only-selected-work-in-a-chunk"><i class="icofont-laika link">&#xef71;</i></a>Trace only selected work in a chunk</h2>
         <p>Selecting records in a chunk callback still commits the original chunk&#39;s offsets after success.</p>
-        <p>To trace selected records as roots, call <code>consumer.spans.process(record)(effect)</code>.
+        <p>To trace selected records with the configured process relationship, call <code>consumer.spans.process(record)(effect)</code>.
         Disable the batch process span with <code>withBatchProcessSpanSetup(_ =&gt; None)</code> if you only want those record spans.</p>
         <p>See <a href="configuration.html">Configuration</a> for span setup options and the <a href="../reference/low-level-api.html">Low-level API</a> for explicit operation handles.</p>
 

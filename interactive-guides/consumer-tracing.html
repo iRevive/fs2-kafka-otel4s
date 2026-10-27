@@ -104,6 +104,7 @@
     <li class="level1 nav-leaf"><a href="#generated-scala">Generated Scala</a></li>
     <li class="level1 nav-leaf"><a href="#choose-a-consumer-api">Choose a consumer API</a></li>
     <li class="level1 nav-leaf"><a href="#configure-spans-independently">Configure spans independently</a></li>
+    <li class="level1 nav-leaf"><a href="#choose-a-process-relationship">Choose a process relationship</a></li>
     <li class="level1 nav-leaf"><a href="#add-child-spans-around-selected-work">Add child spans around selected work</a></li>
     <li class="level1 nav-leaf"><a href="#read-the-relationships">Read the relationships</a></li>
   </ul>
@@ -117,7 +118,8 @@
         <h1 id="consumer-tracing-configurator" class="title">Consumer tracing configurator</h1>
         <p>Choose tracing options, inspect the spans, and copy the Scala example.
         Disabling spans keeps processing and commits enabled.</p>
-        <p>The example uses three messages in one partition, with no active application span.</p>
+        <p>Choose one or three messages in one partition. There is no active application span; the consume helpers keep a
+        receive span active while processing when receive tracing is enabled.</p>
         
         <h2 id="configure-your-consumer" class="section"><a class="anchor-link left" href="#configure-your-consumer"><i class="icofont-laika link">&#xef71;</i></a>Configure your consumer</h2>
         <div class="tracing-explorer" data-consumer-explorer data-explorer-panel hidden>
@@ -125,6 +127,8 @@
             <fieldset class="ce-controls">
               <legend>Consumer and tracing</legend>
               <label>Consumer API <select data-option="method"><option value="record">consumeRecordTraced</option><option value="chunk">consumeChunkTraced</option><option value="stream">recordsTraced</option></select></label>
+              <label>Process relationship <select data-option="relationship"><option value="Link">Link (default)</option><option value="ParentFromRecord">ParentFromRecord</option></select></label>
+              <label>Messages per chunk <select data-option="count"><option value="1">1</option><option value="3" selected>3</option></select></label>
               <label>Topic <input data-option="topic" value="orders"></label>
               <label>Client ID <input data-option="clientId" value="orders-consumer"></label>
               <label>Group ID <input data-option="groupId" value="orders-group"></label>
@@ -132,7 +136,7 @@
                 <label><input type="checkbox" data-option="receive" checked> Receive span</label>
                 <label><input type="checkbox" data-option="process" checked> <span data-process-label>Record process spans</span></label>
                 <label data-commit-control><input type="checkbox" data-option="commit" checked> Commit span</label>
-                <label data-children-control><input type="checkbox" data-option="children"> Child process span per message</label>
+                <label><input type="checkbox" data-option="children"> Application span per message</label>
                 <label><input type="checkbox" data-option="incoming" checked> Incoming trace headers</label>
               </div>
             </fieldset>
@@ -160,7 +164,8 @@
         </div>
         
         <h3 id="incoming-message-contexts" class="section"><a class="anchor-link left" href="#incoming-message-contexts"><i class="icofont-laika link">&#xef71;</i></a>Incoming message contexts</h3>
-        <p>Consumer spans link to these contexts. Each linked consumer span starts its own trace.</p>
+        <p>Consumer spans retain links to these contexts in both relationship modes. With <code>ParentFromRecord</code>, single-record
+        and singleton batch process spans also use the corresponding context as parent, continuing its trace.</p>
         <div class="tracing-explorer ce-contexts" data-explorer-panel data-contexts hidden></div>
         
         <h2 id="generated-scala" class="section"><a class="anchor-link left" href="#generated-scala"><i class="icofont-laika link">&#xef71;</i></a>Generated Scala</h2>
@@ -249,8 +254,30 @@
         </table>
         <p><code>KafkaTracer.noop</code> disables both spans and propagation.</p>
         
+        <h2 id="choose-a-process-relationship" class="section"><a class="anchor-link left" href="#choose-a-process-relationship"><i class="icofont-laika link">&#xef71;</i></a>Choose a process relationship</h2>
+        <p><code>Link</code> creates linked roots. <code>ParentFromRecord</code> continues the message trace for single-record processing and
+        singleton batches, retaining message links. Missing or invalid headers produce a root; multiple-record batches
+        remain linked roots.</p>
+        <pre class="keep-together pdf epub"><code class="nohighlight"><span class="keyword">import</span><span> </span><span class="identifier">fs2</span><span>.</span><span class="identifier">kafka</span><span>.</span><span class="identifier">otel4s</span><span>.</span><span class="identifier">trace</span><span>.</span><span class="type-name">ProcessSpanRelationship</span><span>
+
+</span><span class="keyword">val</span><span> </span><span class="identifier">parentedProcessingConfig</span><span> =
+  </span><span class="type-name">KafkaTracer</span><span>.</span><span class="type-name">Config</span><span>.</span><span class="keyword">default</span><span>
+    .</span><span class="identifier">withProcessSpanSetup</span><span> { </span><span class="identifier">ctx</span><span> =&gt;
+      </span><span class="type-name">KafkaTracer</span><span>.</span><span class="type-name">Config</span><span>.</span><span class="type-name">Defaults</span><span>.</span><span class="identifier">processSpanSetup</span><span>(</span><span class="identifier">ctx</span><span>)
+        .</span><span class="identifier">map</span><span>(</span><span class="identifier">_</span><span>.</span><span class="identifier">withRelationship</span><span>(</span><span class="type-name">ProcessSpanRelationship</span><span>.</span><span class="type-name">ParentFromRecord</span><span>))
+    }</span></code></pre>
+        <p>Set the relationship on the setup returned by <code>withProcessSpanSetup</code>, or independently by
+        <code>withBatchProcessSpanSetup</code> for chunk processing. The setup can choose a relationship per topic or other metadata.</p>
+        <p>Parented spans also link to an active receive span. With <code>recordsTraced</code>, receive has already ended.
+        Receive and commit behavior stays the same.</p>
+        <p>Try <code>ParentFromRecord</code> with <code>consumeChunkTraced</code>, then switch between one and three messages to compare parenting.</p>
+        
         <h2 id="add-child-spans-around-selected-work" class="section"><a class="anchor-link left" href="#add-child-spans-around-selected-work"><i class="icofont-laika link">&#xef71;</i></a>Add child spans around selected work</h2>
-        <p>A chunk handler can select records before processing. This example keeps the latest record per key
+        <p>Enable “Application span per message” with any consumer API to wrap each handler in an application span.
+        With record APIs, each application span is a child of its library process span. With the chunk API,
+        application spans are children of the batch process span. They inherit its trace, including when the process
+        span uses <code>ParentFromRecord</code>.</p>
+        <p>A chunk handler can also select records before processing. This example keeps the latest record per key
         and adds an application span for each selected record:</p>
         <pre><code class="nohighlight"><span class="keyword">import</span><span> </span><span class="identifier">cats</span><span>.</span><span class="identifier">effect</span><span>.</span><span class="type-name">IO</span><span>
 </span><span class="keyword">import</span><span> </span><span class="identifier">cats</span><span>.</span><span class="identifier">syntax</span><span>.</span><span class="identifier">all</span><span>.</span><span class="identifier">_</span><span>
@@ -267,12 +294,27 @@
 )(</span><span class="keyword">implicit</span><span> </span><span class="identifier">tracer</span><span>: </span><span class="type-name">Tracer</span><span>[</span><span class="type-name">IO</span><span>]): </span><span class="type-name">IO</span><span>[</span><span class="type-name">Nothing</span><span>] =
   </span><span class="identifier">consumer</span><span>.</span><span class="identifier">consumeChunkTraced</span><span> { </span><span class="identifier">chunk</span><span> =&gt;
     </span><span class="identifier">selectLatest</span><span>(</span><span class="identifier">chunk</span><span>).</span><span class="identifier">traverse_</span><span> { </span><span class="identifier">record</span><span> =&gt;
-      </span><span class="type-name">Tracer</span><span>[</span><span class="type-name">IO</span><span>].</span><span class="identifier">span</span><span>(</span><span class="string-literal">&quot;process&quot;</span><span>).</span><span class="identifier">surround</span><span>(</span><span class="identifier">handle</span><span>(</span><span class="identifier">record</span><span>))
+      </span><span class="type-name">Tracer</span><span>[</span><span class="type-name">IO</span><span>].</span><span class="identifier">span</span><span>(</span><span class="string-literal">&quot;handle order&quot;</span><span>).</span><span class="identifier">surround</span><span>(</span><span class="identifier">handle</span><span>(</span><span class="identifier">record</span><span>))
     }.</span><span class="identifier">as</span><span>(</span><span class="type-name">CommitNow</span><span>)
   }</span></code></pre>
-        <p>Enable “Child process span per message” to see the result. The demo processes all three messages.
-        Selecting fewer records creates fewer child spans.</p>
-        <p><code>consumer.spans.process(record)(effect)</code> creates a root span linked to the message context.
+        <p>The demo processes every message in the selected chunk. Selecting fewer records in a chunk handler creates
+        fewer child spans. The record API examples wrap handlers in the same way:</p>
+        <pre><code class="nohighlight"><span class="keyword">def</span><span> </span><span class="declaration-name">consumeWithChildren</span><span>(
+    </span><span class="identifier">consumer</span><span>: </span><span class="type-name">TracedKafkaConsumer</span><span>[</span><span class="type-name">IO</span><span>, </span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>],
+    </span><span class="identifier">handle</span><span>: </span><span class="type-name">ConsumerRecord</span><span>[</span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>] =&gt; </span><span class="type-name">IO</span><span>[</span><span class="type-name">Unit</span><span>]
+)(</span><span class="keyword">implicit</span><span> </span><span class="identifier">tracer</span><span>: </span><span class="type-name">Tracer</span><span>[</span><span class="type-name">IO</span><span>]): </span><span class="type-name">IO</span><span>[</span><span class="type-name">Nothing</span><span>] =
+  </span><span class="identifier">consumer</span><span>.</span><span class="identifier">consumeRecordTraced</span><span> { </span><span class="identifier">record</span><span> =&gt;
+    </span><span class="identifier">tracer</span><span>.</span><span class="identifier">span</span><span>(</span><span class="string-literal">&quot;handle order&quot;</span><span>).</span><span class="identifier">surround</span><span>(</span><span class="identifier">handle</span><span>(</span><span class="identifier">record</span><span>))
+  }
+
+</span><span class="keyword">def</span><span> </span><span class="declaration-name">recordsWithChildren</span><span>(
+    </span><span class="identifier">consumer</span><span>: </span><span class="type-name">TracedKafkaConsumer</span><span>[</span><span class="type-name">IO</span><span>, </span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>],
+    </span><span class="identifier">handle</span><span>: </span><span class="type-name">ConsumerRecord</span><span>[</span><span class="type-name">String</span><span>, </span><span class="type-name">String</span><span>] =&gt; </span><span class="type-name">IO</span><span>[</span><span class="type-name">Unit</span><span>]
+)(</span><span class="keyword">implicit</span><span> </span><span class="identifier">tracer</span><span>: </span><span class="type-name">Tracer</span><span>[</span><span class="type-name">IO</span><span>]): </span><span class="identifier">fs2</span><span>.</span><span class="type-name">Stream</span><span>[</span><span class="type-name">IO</span><span>, </span><span class="identifier">fs2</span><span>.</span><span class="identifier">kafka</span><span>.</span><span class="type-name">CommittableOffset</span><span>[</span><span class="type-name">IO</span><span>]] =
+  </span><span class="identifier">consumer</span><span>.</span><span class="identifier">recordsTraced</span><span> { </span><span class="identifier">committable</span><span> =&gt;
+    </span><span class="identifier">tracer</span><span>.</span><span class="identifier">span</span><span>(</span><span class="string-literal">&quot;handle order&quot;</span><span>).</span><span class="identifier">surround</span><span>(</span><span class="identifier">handle</span><span>(</span><span class="identifier">committable</span><span>.</span><span class="identifier">record</span><span>)).</span><span class="identifier">as</span><span>(</span><span class="identifier">committable</span><span>.</span><span class="identifier">offset</span><span>)
+  }</span></code></pre>
+        <p><code>consumer.spans.process(record)(effect)</code> follows the configured process relationship and retains its message link.
         It uses <code>withProcessSpanSetup</code>. The chunk handler still commits the original chunk after success.</p>
         
         <h2 id="read-the-relationships" class="section"><a class="anchor-link left" href="#read-the-relationships"><i class="icofont-laika link">&#xef71;</i></a>Read the relationships</h2>
@@ -281,7 +323,7 @@
             <tr>
               <th>Span</th>
               <th>Parent in this example</th>
-              <th>Message links</th>
+              <th>Links</th>
             </tr>
           </thead>
           <tbody>
@@ -292,17 +334,17 @@
             </tr>
             <tr>
               <td>Record process</td>
-              <td>None</td>
-              <td>Its message context</td>
+              <td>None with <code>Link</code>; message context with <code>ParentFromRecord</code></td>
+              <td>Its message context, plus the ambient receive span when parented inside it</td>
             </tr>
             <tr>
               <td>Batch process</td>
-              <td>None</td>
-              <td>All recognized contexts in the chunk</td>
+              <td>None, except singleton batches with <code>ParentFromRecord</code></td>
+              <td>All recognized contexts, plus the ambient receive span when parented inside it</td>
             </tr>
             <tr>
               <td>Application child</td>
-              <td>Batch process, or receive if batch tracing is disabled</td>
+              <td>Record or batch process; otherwise the active receive span, if any</td>
               <td>None</td>
             </tr>
             <tr>
@@ -312,9 +354,13 @@
             </tr>
           </tbody>
         </table>
-        <p>If both batch process and receive are disabled, application spans are roots.
-        Turning off incoming headers removes message links. It does not change the generated consumer code.</p>
-        <p>The stream example commits batches of three offsets. Actual timing and batch sizes depend on your application.</p>
+        <p>If process tracing is disabled, application spans are children of receive in the consume helpers when receive
+        tracing is enabled. With <code>recordsTraced</code>, receive has already ended, so application spans become roots.
+        If both process and receive tracing are disabled, application spans are roots.
+        Turning off incoming headers removes message links and makes process spans roots in both modes.
+        It does not change the generated consumer code.</p>
+        <p>The stream example commits batches of one or three offsets, matching the selected message count.
+        Actual timing and batch sizes depend on your application.</p>
         <p>Constant attributes can replace derived attributes. Span names and links stay the same.
         Selections are saved in the URL. Keep secrets out of shared attribute values.</p>
 
