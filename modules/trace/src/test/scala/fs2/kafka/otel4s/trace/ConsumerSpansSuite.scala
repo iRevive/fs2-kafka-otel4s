@@ -23,7 +23,6 @@ import fs2.{Chunk, Pipe, Stream}
 import fs2.kafka._
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
 import org.apache.kafka.common.TopicPartition
-import io.opentelemetry.api.common.AttributeKey
 import org.typelevel.otel4s.oteljava.testkit.AttributesExpectation
 import org.typelevel.otel4s.oteljava.testkit.trace.{SpanExpectation, TraceForestExpectation}
 import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
@@ -32,6 +31,7 @@ import org.typelevel.otel4s.oteljava.testkit.trace.{
   LinkExpectation,
   LinkSetExpectation,
   SpanContextExpectation,
+  StatusExpectation,
   TraceExpectation
 }
 import org.typelevel.otel4s.trace.Tracer
@@ -155,8 +155,37 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
         _ <- first.process(ConsumerRecord("topic", 0, 2L, 1, "decoded"))(IO.unit)
         _ <- second.process(ConsumerRecord("topic", 0, 1L, "key", "other"))(IO.unit)
         spans <- testkit.finishedSpans
-        clientIds = spans.map(_.getAttributes.get(AttributeKey.stringKey("messaging.client.id"))).sorted
-        _ <- IO(assertEquals(clientIds, List("first-client", "first-client", "second-client")))
+        _ <- IO(
+          assertExpected(
+            spans,
+            TraceForestExpectation.unordered(
+              root(
+                SpanExpectation
+                  .consumer("process topic")
+                  .attributesSubset(
+                    MessagingExperimentalAttributes.MessagingClientId("first-client"),
+                    MessagingExperimentalAttributes.MessagingConsumerGroupName("group-a")
+                  )
+              ),
+              root(
+                SpanExpectation
+                  .consumer("process topic")
+                  .attributesSubset(
+                    MessagingExperimentalAttributes.MessagingClientId("first-client"),
+                    MessagingExperimentalAttributes.MessagingConsumerGroupName("group-a")
+                  )
+              ),
+              root(
+                SpanExpectation
+                  .consumer("process topic")
+                  .attributesSubset(
+                    MessagingExperimentalAttributes.MessagingClientId("second-client"),
+                    MessagingExperimentalAttributes.MessagingConsumerGroupName("group-b")
+                  )
+              )
+            )
+          )
+        )
       } yield ()
     }
   }
@@ -175,9 +204,14 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
         _ <- spans.process(record)(IO.unit)
         _ <- spans.process(committable)(IO.unit)
         finished <- testkit.finishedSpans
-      } yield assertEquals(
-        finished.map(_.getName).sorted,
-        List("poll topic", "poll topic", "process topic", "process topic")
+      } yield assertExpected(
+        finished,
+        TraceForestExpectation.unordered(
+          root(SpanExpectation.client("poll topic")),
+          root(SpanExpectation.client("poll topic")),
+          root(SpanExpectation.consumer("process topic")),
+          root(SpanExpectation.consumer("process topic"))
+        )
       )
     }
   }
@@ -241,9 +275,9 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
                           )
                         )
                         .matches(attributes) &&
-                      attributes.get[String]("messaging.destination.name").isEmpty &&
-                      attributes.get[String]("messaging.destination.partition.id").isEmpty &&
-                      attributes.get[Long]("messaging.kafka.offset").isEmpty
+                      attributes.get(MessagingExperimentalAttributes.MessagingDestinationName).isEmpty &&
+                      attributes.get(MessagingExperimentalAttributes.MessagingDestinationPartitionId).isEmpty &&
+                      attributes.get(MessagingExperimentalAttributes.MessagingKafkaOffset).isEmpty
                     }
                   )
                   .links(
@@ -367,13 +401,18 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
         assertEquals(emptyResult, "empty")
         assertEquals(noopBatch, "noop-batch")
         assertEquals(getCount, 1)
-        assertEquals(
-          finished.map(_.getAttributes.get(AttributeKey.stringKey("messaging.client.id"))),
-          List("provided-client")
-        )
-        assertEquals(
-          finished.head.getAttributes.get(AttributeKey.stringKey("messaging.consumer.group.name")),
-          "provided-group"
+        assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(
+              SpanExpectation
+                .consumer("process topic")
+                .attributesSubset(
+                  MessagingExperimentalAttributes.MessagingClientId("provided-client"),
+                  MessagingExperimentalAttributes.MessagingConsumerGroupName("provided-group")
+                )
+            )
+          )
         )
       }
     }
@@ -433,8 +472,8 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
         finished <- testkit.finishedSpans
       } yield {
         assertEquals(error, Left(failure))
-        assertEquals(finished.size, 2)
-        assertEquals(finished.map(_.getName), List("process topic", "process topic"))
+        val expected = root(SpanExpectation.consumer("process topic").status(StatusExpectation.error))
+        assertExpected(finished, TraceForestExpectation.unordered(expected, expected))
       }
     }
   }
@@ -483,19 +522,32 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
         assertEquals(context.offset, None)
         assertEquals(context.clientId, Some("client"))
         assertEquals(context.groupId, Some("group"))
-        val commit = finished.find(_.getName == "offset commit").get
-        val ambient = finished.find(_.getName == "ambient").get
-        assertEquals(commit.getParentSpanId, ambient.getSpanId)
-        assertEquals(commit.getKind, io.opentelemetry.api.trace.SpanKind.CLIENT)
-        assertEquals(commit.getLinks.size(), 0)
-        assertEquals(commit.getAttributes.get(AttributeKey.stringKey("messaging.destination.name")), null)
-        assertEquals(commit.getAttributes.get(AttributeKey.stringKey("messaging.destination.partition.id")), null)
-        assertEquals(commit.getAttributes.get(AttributeKey.longKey("messaging.batch.message_count")), null)
-        assertEquals(commit.getAttributes.get(AttributeKey.stringKey("messaging.kafka.message.key")), null)
-        assertEquals(commit.getAttributes.get(AttributeKey.longKey("messaging.kafka.offset")), null)
-        assertEquals(commit.getAttributes.get(AttributeKey.booleanKey("messaging.kafka.message.tombstone")), null)
-        assertEquals(commit.getAttributes.get(AttributeKey.stringKey("messaging.operation.name")), "setup")
-        assertEquals(commit.getAttributes.get(AttributeKey.stringKey("messaging.operation.type")), "settle")
+        assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(
+              SpanExpectation.internal("ambient"),
+              TraceExpectation.leaf(
+                SpanExpectation
+                  .client("offset commit")
+                  .linkCount(0)
+                  .attributes(
+                    AttributesExpectation.exact(
+                      Attributes(
+                        MessagingExperimentalAttributes.MessagingSystem(
+                          MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                        ),
+                        MessagingExperimentalAttributes.MessagingOperationName("setup"),
+                        MessagingExperimentalAttributes.MessagingOperationType("settle"),
+                        MessagingExperimentalAttributes.MessagingClientId("client"),
+                        MessagingExperimentalAttributes.MessagingConsumerGroupName("group")
+                      )
+                    )
+                  )
+              )
+            )
+          )
+        )
       }
     }
   }
@@ -510,15 +562,29 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
         _ <- spans.commitOffsets(offsets)(IO.pure("done"))
         finished <- testkit.finishedSpans
       } yield {
-        val commit = finished.head
-        assertEquals(commit.getName, "commit orders")
-        assertEquals(commit.getParentSpanId, "0000000000000000")
-        assertEquals(commit.getKind, io.opentelemetry.api.trace.SpanKind.CLIENT)
-        assertEquals(commit.getLinks.size(), 0)
-        assertEquals(commit.getAttributes.get(AttributeKey.stringKey("messaging.destination.name")), "orders")
-        assertEquals(commit.getAttributes.get(AttributeKey.stringKey("messaging.destination.partition.id")), "3")
-        assertEquals(commit.getAttributes.get(AttributeKey.longKey("messaging.kafka.offset")), null)
-        assertEquals(commit.getAttributes.get(AttributeKey.longKey("messaging.batch.message_count")), null)
+        assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(
+              SpanExpectation
+                .client("commit orders")
+                .linkCount(0)
+                .attributes(
+                  AttributesExpectation.exact(
+                    Attributes(
+                      MessagingExperimentalAttributes.MessagingSystem(
+                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      ),
+                      MessagingExperimentalAttributes.MessagingOperationName("commit"),
+                      MessagingExperimentalAttributes.MessagingOperationType("settle"),
+                      MessagingExperimentalAttributes.MessagingDestinationName("orders"),
+                      MessagingExperimentalAttributes.MessagingDestinationPartitionId("3")
+                    )
+                  )
+                )
+            )
+          )
+        )
       }
     }
   }
@@ -574,7 +640,8 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
         finished <- testkit.finishedSpans
       } yield {
         assertEquals(error, Left(failure))
-        assertEquals(finished.map(_.getName), List("commit orders", "commit orders"))
+        val expected = root(SpanExpectation.client("commit orders").status(StatusExpectation.error))
+        assertExpected(finished, TraceForestExpectation.unordered(expected, expected))
       }
     }
   }
@@ -600,8 +667,26 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
         finished <- testkit.finishedSpans
       } yield {
         assertEquals(groups, List(List(2L), List(4L), List(5L)))
-        assertEquals(finished.map(_.getName), List("commit orders", "commit orders", "commit orders"))
-        assert(finished.forall(_.getAttributes.get(AttributeKey.longKey("messaging.batch.message_count")) == null))
+        val expected = root(
+          SpanExpectation
+            .client("commit orders")
+            .attributes(
+              AttributesExpectation.exact(
+                Attributes(
+                  MessagingExperimentalAttributes.MessagingSystem(
+                    MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                  ),
+                  MessagingExperimentalAttributes.MessagingOperationName("commit"),
+                  MessagingExperimentalAttributes.MessagingOperationType("settle"),
+                  MessagingExperimentalAttributes.MessagingDestinationName("orders"),
+                  MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
+                  MessagingExperimentalAttributes.MessagingClientId("client"),
+                  MessagingExperimentalAttributes.MessagingConsumerGroupName("group")
+                )
+              )
+            )
+        )
+        assertExpected(finished, TraceForestExpectation.unordered(expected, expected, expected))
       }
     }
   }
@@ -647,7 +732,8 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
       } yield {
         assertEquals(dispatched.sortBy(_._1), List("first" -> List(3L), "second" -> List(5L)))
         assertEquals(didFlush, true)
-        assertEquals(finished.size, 3)
+        val expected = root(SpanExpectation.client("commit orders"))
+        assertExpected(finished, TraceForestExpectation.unordered(expected, expected, expected))
       }
     }
   }
@@ -715,7 +801,8 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
       } yield {
         assertEquals(failed, Left(failure))
         assertEquals(laterCount, 0)
-        assertEquals(finished.map(_.getName), List("commit orders", "commit orders"))
+        val expected = root(SpanExpectation.client("commit orders").status(StatusExpectation.error))
+        assertExpected(finished, TraceForestExpectation.unordered(expected, expected))
       }
     }
   }
@@ -746,14 +833,26 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
           .drain
         finished <- testkit.finishedSpans
       } yield {
-        assertEquals(finished.size, 2)
-        val noMetadata = finished.find(_.getAttributes.get(AttributeKey.stringKey("messaging.client.id")) == null).get
-        assertEquals(noMetadata.getAttributes.get(AttributeKey.stringKey("messaging.consumer.group.name")), null)
-        val explicit = finished.find(_.getAttributes.get(AttributeKey.stringKey("messaging.client.id")) != null).get
-        assertEquals(explicit.getAttributes.get(AttributeKey.stringKey("messaging.client.id")), "orders-client")
-        assertEquals(
-          explicit.getAttributes.get(AttributeKey.stringKey("messaging.consumer.group.name")),
-          "orders-group"
+        assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(
+              SpanExpectation
+                .client("commit orders")
+                .attributes(AttributesExpectation.where("no client or group metadata") { attributes =>
+                  attributes.get(MessagingExperimentalAttributes.MessagingClientId).isEmpty &&
+                  attributes.get(MessagingExperimentalAttributes.MessagingConsumerGroupName).isEmpty
+                })
+            ),
+            root(
+              SpanExpectation
+                .client("commit orders")
+                .attributesSubset(
+                  MessagingExperimentalAttributes.MessagingClientId("orders-client"),
+                  MessagingExperimentalAttributes.MessagingConsumerGroupName("orders-group")
+                )
+            )
+          )
         )
       }
     }
@@ -775,7 +874,8 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
         finished <- testkit.finishedSpans
       } yield {
         assertEquals(count, 6)
-        assertEquals(finished.size, 6)
+        val expected = root(SpanExpectation.client("commit orders"))
+        assertExpected(finished, TraceForestExpectation.unordered(expected, List.fill(5)(expected) *))
       }
     }
   }

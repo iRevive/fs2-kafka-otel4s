@@ -165,7 +165,7 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
                         MessagingExperimentalAttributes.MessagingBatchMessageCount(2L)
                       )
                     )
-                    .matches(attributes) && attributes.get[Long]("messaging.kafka.offset").isEmpty
+                    .matches(attributes) && attributes.get(MessagingExperimentalAttributes.MessagingKafkaOffset).isEmpty
                 })
             ),
             root(SpanExpectation.client("commit topic").scopeName("fs2.kafka"))
