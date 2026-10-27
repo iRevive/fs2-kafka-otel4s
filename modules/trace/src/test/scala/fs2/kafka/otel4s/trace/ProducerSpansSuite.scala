@@ -19,6 +19,8 @@ package fs2.kafka.otel4s.trace
 import cats.effect.{Deferred, IO, Ref}
 import fs2.Chunk
 import fs2.kafka._
+import org.apache.kafka.clients.producer.RecordMetadata
+import org.apache.kafka.common.TopicPartition
 import org.typelevel.otel4s.oteljava.testkit.trace.{SpanExpectation, StatusExpectation, TraceForestExpectation}
 import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
 import org.typelevel.otel4s.trace.TracerProvider
@@ -59,7 +61,7 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
             }.as(
               completed
                 .set(true)
-                .as(Chunk.empty[(ProducerRecord[String, String], org.apache.kafka.clients.producer.RecordMetadata)])
+                .as(Chunk.empty[(ProducerRecord[String, String], RecordMetadata)])
             )
           }
           before <- testkit.finishedSpans
@@ -166,8 +168,8 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
               IO.pure(
                 IO.pure(
                   prepared.map(
-                    _ -> new org.apache.kafka.clients.producer.RecordMetadata(
-                      new org.apache.kafka.common.TopicPartition("orders", 0),
+                    _ -> new RecordMetadata(
+                      new TopicPartition("orders", 0),
                       42L,
                       0,
                       0L,

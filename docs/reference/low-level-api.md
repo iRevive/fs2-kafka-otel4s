@@ -80,10 +80,9 @@ Commit spans include:
 
 - Topics being committed.
 - A partition when the map has exactly one topic-partition entry.
-- The active span as parent, if one exists. Otherwise, the commit span is a root.
+- An independent root context, even when an application span is active.
 
 Offset-only commits have no record counts, record details, or message links.
-They use the context active at commit time.
 
 `kafkaTracer.consumerSpans(metadata).commitBatchWithin` traces each commit call.
 The standard `fs2.kafka.commitBatchWithin` adds no spans.

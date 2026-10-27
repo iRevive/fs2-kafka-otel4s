@@ -57,6 +57,51 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
       }
   }
 
+  test("consume helpers commit as roots inside an ambient span") {
+    KafkaTracerTestkit.create().use { testkit =>
+      val record = ConsumerRecord("topic", 0, 1L, "k", "v")
+      for {
+        commits <- Ref[IO].of(0)
+        chunkConsumer <- testkit.tracedConsumer[String, String](
+          StubKafkaConsumer.streaming(List(committableRecord(record, commits)))
+        )
+        recordConsumer <- testkit.tracedConsumer[String, String](
+          StubKafkaConsumer.streaming(List(committableRecord(record, commits)))
+        )
+        ambientContext <- testkit.appTracer.rootSpan("ambient").surround {
+          chunkConsumer.consumeChunkTraced(_ => IO.pure(CommitNow)).attempt >>
+            recordConsumer.consumeRecordTraced(_ => IO.unit).attempt >>
+            testkit.appTracer.currentSpanOrThrow.map(_.context)
+        }
+        count <- commits.get
+        finished <- testkit.finishedSpans
+      } yield {
+        assertEquals(count, 2)
+        val commit = root(
+          SpanExpectation
+            .client("commit topic")
+            .spanContext(
+              SpanContextExpectation.any.where("commit starts a separate trace")(
+                _.traceId != ambientContext.traceId
+              )
+            )
+        )
+        assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(SpanExpectation.internal("ambient")),
+            root(SpanExpectation.client("poll topic")),
+            root(SpanExpectation.consumer("process topic")),
+            root(SpanExpectation.client("poll topic")),
+            root(SpanExpectation.consumer("process topic")),
+            commit,
+            commit
+          )
+        )
+      }
+    }
+  }
+
   test("consumeChunkTraced(chunk) traces delivery, processing, and commit") {
     KafkaTracerTestkit
       .create()
