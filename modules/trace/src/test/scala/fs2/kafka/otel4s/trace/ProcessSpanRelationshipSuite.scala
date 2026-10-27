@@ -18,17 +18,41 @@ package fs2.kafka.otel4s.trace
 
 import cats.effect.IO
 import fs2.Chunk
-import fs2.kafka.{ConsumerRecord, Header, Headers}
+import fs2.kafka.{ConsumerRecord, Header, Headers, ProducerRecord}
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator
 import io.opentelemetry.context.propagation.TextMapPropagator
-import org.typelevel.otel4s.trace.TracerProvider
-
-import scala.jdk.CollectionConverters._
+import org.typelevel.otel4s.{Attribute, Attributes}
+import org.typelevel.otel4s.oteljava.testkit.trace.{
+  LinkExpectation,
+  LinkSetExpectation,
+  SpanContextExpectation,
+  SpanExpectation,
+  TraceExpectation,
+  TraceForestExpectation
+}
+import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
+import org.typelevel.otel4s.trace.{SpanContext, TracerProvider}
 
 final class ProcessSpanRelationshipSuite extends KafkaTracingTestSupport {
 
   private val traceId = "12345678901234567890123456789012"
   private val spanId = "1234567890123456"
+  private def incomingContext = SpanContextExpectation.any.traceIdHex(traceId)
+
+  private def parentedProcess(topic: String) = SpanExpectation
+    .consumer(s"process $topic")
+    .spanContext(incomingContext)
+    .parentSpanContext(incomingContext.spanIdHex(spanId).remote(true))
+
+  private def messageLink(topic: String) = LinkExpectation.any
+    .spanContext(incomingContext.spanIdHex(spanId).remote(true))
+    .attributesSubset(
+      MessagingExperimentalAttributes.MessagingDestinationName(topic),
+      MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
+      MessagingExperimentalAttributes.MessagingKafkaMessageKey("key"),
+      MessagingExperimentalAttributes.MessagingKafkaOffset(1L)
+    )
+
   private val record = ConsumerRecord("orders", 0, 1L, "key", "value")
   private val config = KafkaTracer.Config.default
     .withProcessSpanSetup { ctx =>
@@ -65,22 +89,29 @@ final class ProcessSpanRelationshipSuite extends KafkaTracingTestSupport {
             )
           case _ => spans.processBatch(Chunk.singleton(incoming))(testkit.appTracer.span("work").surround(IO.pure(42)))
         }
-        result <- if (ambient) testkit.appTracer.rootSpan("ambient").surround(effect) else effect
+        resultAndAmbient <-
+          if (ambient) testkit.appTracer.rootSpan("ambient").surround {
+            for {
+              span <- testkit.appTracer.currentSpanOrThrow
+              result <- effect
+            } yield (result, Some(span.context): Option[SpanContext])
+          }
+          else effect.map(result => (result, Option.empty[SpanContext]))
+        (result, ambientContext) = resultAndAmbient
         finished <- testkit.finishedSpans
       } yield {
         assertEquals(result, 42)
-        val process = finished.find(_.getName == "process orders").get
-        assertEquals(process.getTraceId, traceId)
-        assertEquals(process.getParentSpanId, spanId)
-        assert(process.getParentSpanContext.isRemote)
-        val links = process.getLinks.asScala.toList.map(l => (l.getSpanContext.getTraceId, l.getSpanContext.getSpanId))
-        val ambientLinks = finished.filter(_.getName == "ambient").map(s => (s.getTraceId, s.getSpanId))
-        assertEquals(links, (traceId, spanId) :: ambientLinks)
-        val messageLink = process.getLinks.get(0)
-        assert(!messageLink.getAttributes.isEmpty)
-        val work = finished.find(_.getName == "work").get
-        assertEquals(work.getTraceId, traceId)
-        assertEquals(work.getParentSpanId, process.getSpanId)
+        val ambientLinks = ambientContext.toList.map { context =>
+          LinkExpectation.any.spanContext(SpanContextExpectation.exact(context))
+        }
+        val process = TraceExpectation.ordered(
+          parentedProcess("orders").links(LinkSetExpectation.exactly(messageLink("orders"), ambientLinks *)),
+          TraceExpectation.leaf(SpanExpectation.internal("work").spanContext(incomingContext))
+        )
+        val expected = ambientContext.fold(TraceForestExpectation.unordered(process)) { context =>
+          TraceForestExpectation.unordered(process, root(SpanExpectation.internal("ambient").spanContextExact(context)))
+        }
+        assertExpected(finished, expected)
       }
     }
   }
@@ -101,9 +132,13 @@ final class ProcessSpanRelationshipSuite extends KafkaTracingTestSupport {
         }
         finished <- testkit.finishedSpans
       } yield {
-        val process = finished.find(_.getName == "process orders").get
-        assert(!process.getParentSpanContext.isValid)
-        assert(process.getLinks.isEmpty)
+        assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(SpanExpectation.internal("ambient")),
+            root(SpanExpectation.consumer("process orders").linkCount(0))
+          )
+        )
       }
     }
   }
@@ -121,13 +156,15 @@ final class ProcessSpanRelationshipSuite extends KafkaTracingTestSupport {
         }
         finished <- testkit.finishedSpans
       } yield {
-        val operations = finished.filter(s => s.getName == "process orders" || s.getName == "poll orders")
-        assertEquals(operations.size, 2)
-        operations.foreach { span =>
-          assert(!span.getParentSpanContext.isValid)
-          assertEquals(span.getLinks.size(), 2)
-          assert(span.getLinks.asScala.forall(_.getSpanContext.getSpanId == spanId))
-        }
+        val links = LinkSetExpectation.exactly(messageLink("orders"), messageLink("orders"))
+        assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(SpanExpectation.internal("ambient")),
+            root(SpanExpectation.consumer("process orders").links(links)),
+            root(SpanExpectation.client("poll orders").links(links))
+          )
+        )
       }
     }
   }
@@ -137,17 +174,31 @@ final class ProcessSpanRelationshipSuite extends KafkaTracingTestSupport {
       for {
         producer <- testkit.tracedProducer[String, String](StubKafkaProducer.metadataOnly("client"))
         consumer <- testkit.tracedConsumer[String, String](StubKafkaConsumer.metadataOnly("client", "group"), config)
-        _ <- testkit.appTracer.rootSpan("ambient").surround {
-          producer.injectHeaders(fs2.kafka.ProducerRecord("orders", "key", "value")).flatMap { propagated =>
+        ambientContext <- testkit.appTracer.rootSpan("ambient").surround {
+          producer.injectHeaders(ProducerRecord("orders", "key", "value")).flatMap { propagated =>
             consumer.spans.process(record.withHeaders(propagated.headers))(IO.unit)
-          }
+          } >> testkit.appTracer.currentSpanOrThrow.map(_.context)
         }
         finished <- testkit.finishedSpans
       } yield {
-        val ambient = finished.find(_.getName == "ambient").get
-        val process = finished.find(_.getName == "process orders").get
-        assertEquals(process.getParentSpanId, ambient.getSpanId)
-        assertEquals(process.getLinks.size(), 1)
+        val extractedContext = SpanContextExpectation.any
+          .traceIdHex(ambientContext.traceIdHex)
+          .spanIdHex(ambientContext.spanIdHex)
+          .remote(true)
+        assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(
+              SpanExpectation.internal("ambient").spanContextExact(ambientContext),
+              TraceExpectation.leaf(
+                SpanExpectation
+                  .consumer("process orders")
+                  .parentSpanContext(extractedContext)
+                  .links(LinkSetExpectation.exactly(LinkExpectation.any.spanContext(extractedContext)))
+              )
+            )
+          )
+        )
       }
     }
   }
@@ -175,15 +226,21 @@ final class ProcessSpanRelationshipSuite extends KafkaTracingTestSupport {
         }
         finished <- testkit.finishedSpans
       } yield {
-        val ambient = finished.find(_.getName == "ambient").get
-        val processes = finished.filter(_.getName == "process orders")
-        assertEquals(processes.size, 1)
-        assert(!processes.head.getParentSpanContext.isValid)
-        assertEquals(processes.head.getLinks.size(), 1)
-        assertEquals(processes.head.getLinks.get(0).getSpanContext.getSpanId, spanId)
-        finished.filter(_.getName.endsWith("-work")).foreach { span =>
-          assertEquals(span.getParentSpanId, ambient.getSpanId)
-        }
+        assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(
+              SpanExpectation.internal("ambient"),
+              TraceExpectation.leaf(SpanExpectation.internal("single-work")),
+              TraceExpectation.leaf(SpanExpectation.internal("batch-work"))
+            ),
+            root(
+              SpanExpectation
+                .consumer("process orders")
+                .links(LinkSetExpectation.exactly(messageLink("orders")))
+            )
+          )
+        )
       }
     }
   }
@@ -215,12 +272,18 @@ final class ProcessSpanRelationshipSuite extends KafkaTracingTestSupport {
         _ <- spans.processBatch(Chunk.singleton(payments))(IO.unit)
         finished <- testkit.finishedSpans
       } yield {
-        assertEquals(
-          finished.map(_.getName),
-          List("process orders", "process payments", "process orders", "process payments")
+        assertExpected(
+          finished,
+          TraceForestExpectation.ordered(
+            TraceExpectation.leaf(parentedProcess("orders").links(LinkSetExpectation.exactly(messageLink("orders")))),
+            root(
+              SpanExpectation.consumer("process payments").links(LinkSetExpectation.exactly(messageLink("payments")))
+            ),
+            root(SpanExpectation.consumer("process orders").links(LinkSetExpectation.exactly(messageLink("orders")))),
+            TraceExpectation
+              .leaf(parentedProcess("payments").links(LinkSetExpectation.exactly(messageLink("payments"))))
+          )
         )
-        assertEquals(finished.map(_.getParentSpanContext.isValid), List(true, false, false, true))
-        assert(finished.forall(_.getLinks.size() == 1))
       }
     }
   }
@@ -228,7 +291,7 @@ final class ProcessSpanRelationshipSuite extends KafkaTracingTestSupport {
   test("changing relationship preserves custom span setup") {
     val setup = KafkaTracer.Config.SpanSetup.Process(
       "custom process",
-      org.typelevel.otel4s.Attributes(org.typelevel.otel4s.Attribute("app.name", "orders")),
+      Attributes(Attribute("app.name", "orders")),
       KafkaTracer.Config.Defaults.spanFinalizationStrategy
     )
     val parented = setup.withRelationship(ProcessSpanRelationship.ParentFromRecord)
