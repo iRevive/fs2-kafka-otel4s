@@ -418,11 +418,12 @@ private[otel4s] object Semconv {
   private def singleRecordSendResultAttributes(metadata: RecordMetadata): Attributes = {
     val builder = Attributes.newBuilder
 
-    // Producer result metadata is only available after Kafka acknowledges a single produced record.
-    // At that point the chosen partition and broker-assigned offset become known and can be added to
-    // the send span as result attributes.
-    builder.addOne(Keys.DestinationPartitionId(metadata.partition.toString))
-    builder.addOne(Keys.KafkaOffset(metadata.offset))
+    // Single-record results may omit broker metadata (for example, with acks=0). Only add known
+    // values so unavailable results do not overwrite input or configured attributes with sentinels.
+    if (metadata.partition >= 0)
+      builder.addOne(Keys.DestinationPartitionId(metadata.partition.toString))
+    if (metadata.hasOffset)
+      builder.addOne(Keys.KafkaOffset(metadata.offset))
 
     builder.result()
   }

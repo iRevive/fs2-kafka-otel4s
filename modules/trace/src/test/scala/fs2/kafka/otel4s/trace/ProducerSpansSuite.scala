@@ -125,6 +125,43 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
     }
   }
 
+  for {
+    partition <- List(RecordMetadata.UNKNOWN_PARTITION, 0)
+    offset <- List(-1L, 0L, 42L)
+    count <- List(1, 2)
+  } {
+    test(s"result enrichment with partition=$partition offset=$offset count=$count") {
+      KafkaTracerTestkit.create().use { testkit =>
+        implicit val tp: TracerProvider[IO] = testkit.tracerProvider
+        val metadata = new RecordMetadata(new TopicPartition("orders", partition), offset, 0, -1L, 0, 0)
+        for {
+          tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default.withBatchSpanMode(BatchSpanMode.SharedSendSpan))
+          _ <- tracer
+            .producerSpans(provider)
+            .produce(Chunk.from(List.fill(count)(ProducerRecord("orders", "key", "value"))))(
+              StubKafkaProducer.withResultMetadata[String, String](metadata).produce
+            )
+            .flatten
+          finished <- testkit.finishedSpans
+        } yield {
+          assertEquals(finished.size, 1)
+          val attributes = finished.head.getAttributes
+          assertEquals(
+            Option(
+              attributes.get(io.opentelemetry.api.common.AttributeKey.stringKey("messaging.destination.partition.id"))
+            ),
+            Option.when(count == 1 && partition >= 0)(partition.toString)
+          )
+          assertEquals(
+            Option(attributes.get(io.opentelemetry.api.common.AttributeKey.longKey("messaging.kafka.offset")))
+              .map(_.longValue),
+            Option.when(count == 1 && offset >= 0)(offset)
+          )
+        }
+      }
+    }
+  }
+
   test("empty and noop operations pass original records through without resolving metadata") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tp: TracerProvider[IO] = testkit.tracerProvider

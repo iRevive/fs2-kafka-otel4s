@@ -119,6 +119,12 @@ object StubKafkaProducer {
         }
     }
 
+  def withResultMetadata[K, V](metadata: RecordMetadata): KafkaProducer.WithSettings[IO, K, V] =
+    new StubKafkaProducer[K, V](producerSettings[K, V]("producer-client")) {
+      override def produce(records: ProducerRecords[K, V]): IO[IO[ProducerResult[K, V]]] =
+        IO.pure(IO.pure(records.map(_ -> metadata)))
+    }
+
   def recorder[K, V](clientId: String = "producer-client"): IO[Recorder[K, V]] =
     for {
       captured <- Ref[IO].of(Chunk.empty[ProducerRecord[K, V]])
