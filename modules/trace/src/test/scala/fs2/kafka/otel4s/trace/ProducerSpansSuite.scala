@@ -19,10 +19,12 @@ package fs2.kafka.otel4s.trace
 import cats.effect.{Deferred, IO, Ref}
 import fs2.Chunk
 import fs2.kafka._
+import io.opentelemetry.api.trace.StatusCode
 import org.apache.kafka.clients.producer.RecordMetadata
 import org.apache.kafka.common.TopicPartition
 import org.typelevel.otel4s.oteljava.testkit.AttributesExpectation
 import org.typelevel.otel4s.oteljava.testkit.trace.{SpanExpectation, StatusExpectation, TraceForestExpectation}
+import org.typelevel.otel4s.semconv.attributes.ErrorAttributes
 import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
 import org.typelevel.otel4s.trace.TracerProvider
 
@@ -56,14 +58,22 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
           completed <- Ref[IO].of(false)
           spans = tracer.producerSpans(provider)
           await <- spans.produce(records ++ records) { prepared =>
-            IO {
-              assertEquals(prepared.size, 2)
-              assert(prepared.forall(_.headers.exists("traceparent")))
-            }.as(
-              completed
-                .set(true)
-                .as(Chunk.empty[(ProducerRecord[String, String], RecordMetadata)])
-            )
+            testkit.finishedSpans
+              .flatMap { finished =>
+                IO {
+                  assertEquals(
+                    finished.count(_.getName == "create orders"),
+                    if (mode == BatchSpanMode.PerRecordSpans) 2 else 0
+                  )
+                  assertEquals(prepared.size, 2)
+                  assert(prepared.forall(_.headers.exists("traceparent")))
+                }
+              }
+              .as(
+                completed
+                  .set(true)
+                  .as(Chunk.empty[(ProducerRecord[String, String], RecordMetadata)])
+              )
           }
           before <- testkit.finishedSpans
           isCompleted <- completed.get
@@ -79,6 +89,14 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
           _ <- await
           after <- testkit.finishedSpans
         } yield {
+          if (mode == BatchSpanMode.PerRecordSpans) {
+            val creates = after.filter(_.getName == "create orders")
+            val send = after.find(_.getName == "send orders").get
+            import scala.jdk.CollectionConverters._
+            assertEquals(send.getLinks.asScala.map(_.getSpanContext).toSet, creates.map(_.getSpanContext).toSet)
+            assert(creates.forall(_.getEndEpochNanos <= send.getStartEpochNanos))
+            assertEquals(creates.map(_.getSpanId).distinct.size, 2)
+          }
           assertExpected(
             after,
             if (mode == BatchSpanMode.PerRecordSpans)
@@ -249,7 +267,7 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
           tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
           result <- tracer
             .producerSpans(provider)
-            .produce(records) { _ =>
+            .produce(records ++ records) { _ =>
               if (ackStage) IO.pure(IO.raiseError[ProducerResult[String, String]](failure))
               else IO.raiseError[IO[ProducerResult[String, String]]](failure)
             }
@@ -257,8 +275,27 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
             .attempt
           finished <- testkit.finishedSpans
         } yield {
+          val creates = finished.filter(_.getName == "create orders")
+          assertEquals(creates.size, 2)
+          assert(creates.forall(_.getStatus.getStatusCode == StatusCode.UNSET))
+          assert(
+            creates
+              .forall(_.getAttributes.get(io.opentelemetry.api.common.AttributeKey.stringKey("error.type")) == null)
+          )
           assertEquals(result, Left(failure))
-          assertExpected(finished, TraceForestExpectation.unordered(root(sendSpan.status(StatusExpectation.error))))
+          assertExpected(
+            finished,
+            TraceForestExpectation.unordered(
+              createSpan,
+              createSpan,
+              root(
+                SpanExpectation
+                  .client("send orders")
+                  .status(StatusExpectation.error)
+                  .attributesSubset(ErrorAttributes.ErrorType("java.lang.RuntimeException"))
+              )
+            )
+          )
         }
       }
     }
@@ -272,7 +309,7 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
           pending = started.complete(()) *> IO.never[ProducerResult[String, String]]
           fiber <- tracer
             .producerSpans(provider)
-            .produce(records) { _ =>
+            .produce(records ++ records) { _ =>
               if (ackStage) IO.pure(pending) else pending.map(IO.pure(_))
             }
             .flatten
@@ -282,7 +319,16 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
           finished <- testkit.finishedSpans
         } yield assertExpected(
           finished,
-          TraceForestExpectation.unordered(root(sendSpan.status(StatusExpectation.error)))
+          TraceForestExpectation.unordered(
+            createSpan,
+            createSpan,
+            root(
+              SpanExpectation
+                .client("send orders")
+                .status(StatusExpectation.error)
+                .attributesSubset(ErrorAttributes.ErrorType("canceled"))
+            )
+          )
         )
       }
     }
