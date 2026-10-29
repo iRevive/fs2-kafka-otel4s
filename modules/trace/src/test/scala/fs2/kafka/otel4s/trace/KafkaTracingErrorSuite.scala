@@ -191,19 +191,24 @@ final class KafkaTracingErrorSuite extends KafkaTracingTestSupport {
             assertEquals(produced, Chunk.empty)
             assertEquals(startedNames.sorted, List("create topic-a", "create topic-b"))
             assertEquals(endedNames.sorted, startedNames.sorted)
-            val first = spans.find(_.getName == "create topic-a").get
-            val second = spans.find(_.getName == "create topic-b").get
-            assertEquals(first.getStatus.getStatusCode, io.opentelemetry.api.trace.StatusCode.UNSET)
-            assertEquals(first.getEvents.size(), 0)
-            assertEquals(second.getEvents.size(), 1)
-            assert(first.getEndEpochNanos <= second.getStartEpochNanos)
             assertExpected(
               spans,
               TraceForestExpectation.unordered(
-                root(SpanExpectation.producer("create topic-a")),
+                root(
+                  SpanExpectation
+                    .producer("create topic-a")
+                    .status(StatusExpectation.unset)
+                    .eventCount(0)
+                    .where("must end before the next create span starts") { first =>
+                      spans
+                        .filter(_.getName == "create topic-b")
+                        .forall(second => first.getEndEpochNanos <= second.getStartEpochNanos)
+                    }
+                ),
                 root(
                   SpanExpectation
                     .producer("create topic-b")
+                    .eventCount(1)
                     .status(StatusExpectation.error)
                     .attributesSubset(ErrorAttributes.ErrorType("java.lang.RuntimeException"))
                 )
@@ -271,14 +276,10 @@ final class KafkaTracingErrorSuite extends KafkaTracingTestSupport {
           assert(outcome.isCanceled)
           assertEquals(started.sorted, List("create topic-a", "create topic-b"))
           assertEquals(ended.sorted, started.sorted)
-          assertEquals(
-            finished.find(_.getName == "create topic-a").get.getStatus.getStatusCode,
-            io.opentelemetry.api.trace.StatusCode.UNSET
-          )
           assertExpected(
             finished,
             TraceForestExpectation.unordered(
-              root(SpanExpectation.producer("create topic-a")),
+              root(SpanExpectation.producer("create topic-a").status(StatusExpectation.unset)),
               root(
                 SpanExpectation
                   .producer("create topic-b")
