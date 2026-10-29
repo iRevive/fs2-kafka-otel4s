@@ -20,6 +20,8 @@ import cats.effect.{IO, Resource}
 import fs2.Chunk
 import fs2.kafka._
 import fs2.kafka.otel4s.trace.instances._
+import org.apache.kafka.clients.producer.RecordMetadata
+import org.apache.kafka.common.TopicPartition
 import org.typelevel.otel4s.oteljava.testkit.AttributesExpectation
 import org.typelevel.otel4s.oteljava.testkit.trace.{
   LinkExpectation,
@@ -168,6 +170,74 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
           }
         } yield ()
       }
+  }
+
+  for {
+    source <- List("input", "constant", "setup")
+    knownResult <- List(false, true)
+  } {
+    test(s"result metadata preserves attribute precedence: source=$source knownResult=$knownResult") {
+      KafkaTracerTestkit.create().use { testkit =>
+        val configured = Attributes(
+          MessagingExperimentalAttributes.MessagingDestinationPartitionId("5"),
+          MessagingExperimentalAttributes.MessagingKafkaOffset(100L)
+        )
+        val config = source match {
+          case "constant" => KafkaTracer.Config.default.withConstAttributes(configured)
+          case "setup"    =>
+            KafkaTracer.Config.default
+              .withConstAttributes(
+                Attributes(
+                  MessagingExperimentalAttributes.MessagingDestinationPartitionId("4"),
+                  MessagingExperimentalAttributes.MessagingKafkaOffset(99L)
+                )
+              )
+              .withSendSpanSetup(_ =>
+                Some(
+                  KafkaTracer.Config.SpanSetup.Send(
+                    "send topic",
+                    configured,
+                    KafkaTracer.Config.Defaults.spanFinalizationStrategy
+                  )
+                )
+              )
+          case _ => KafkaTracer.Config.default
+        }
+        val metadata = new RecordMetadata(
+          new TopicPartition("topic", if (knownResult) 0 else RecordMetadata.UNKNOWN_PARTITION),
+          if (knownResult) 0L else -1L,
+          0,
+          -1L,
+          0,
+          0
+        )
+        for {
+          producer <- testkit.tracedProducer(StubKafkaProducer.withResultMetadata[String, String](metadata), config)
+          _ <- producer.produce(ProducerRecords.one(ProducerRecord("topic", "key", "value").withPartition(3))).flatten
+          finished <- testkit.finishedSpans
+        } yield assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(
+              SpanExpectation
+                .producer("send topic")
+                .scopeName("fs2.kafka")
+                .attributes(
+                  AttributesExpectation.where("result metadata must preserve attribute precedence") { attributes =>
+                    val partition = if (knownResult) "0" else if (source == "input") "3" else "5"
+                    val offset = if (knownResult) Some(0L) else if (source == "input") None else Some(100L)
+                    attributes
+                      .get(MessagingExperimentalAttributes.MessagingDestinationPartitionId)
+                      .contains(MessagingExperimentalAttributes.MessagingDestinationPartitionId(partition)) &&
+                    attributes.get(MessagingExperimentalAttributes.MessagingKafkaOffset) ==
+                      offset.map(MessagingExperimentalAttributes.MessagingKafkaOffset(_))
+                  }
+                )
+            )
+          )
+        )
+      }
+    }
   }
 
   test("batch produce creates per-record trace contexts and links the batch send span") {

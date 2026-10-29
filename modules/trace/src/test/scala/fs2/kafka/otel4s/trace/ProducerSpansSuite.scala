@@ -21,6 +21,7 @@ import fs2.Chunk
 import fs2.kafka._
 import org.apache.kafka.clients.producer.RecordMetadata
 import org.apache.kafka.common.TopicPartition
+import org.typelevel.otel4s.oteljava.testkit.AttributesExpectation
 import org.typelevel.otel4s.oteljava.testkit.trace.{SpanExpectation, StatusExpectation, TraceForestExpectation}
 import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
 import org.typelevel.otel4s.trace.TracerProvider
@@ -121,6 +122,51 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
           )
         )
         assertExpected(finished, TraceForestExpectation.unordered(expected, expected))
+      }
+    }
+  }
+
+  for {
+    partition <- List(RecordMetadata.UNKNOWN_PARTITION, 0)
+    offset <- List(-1L, 0L, 42L)
+    count <- List(1, 2)
+  } {
+    test(s"result enrichment with partition=$partition offset=$offset count=$count") {
+      KafkaTracerTestkit.create().use { testkit =>
+        implicit val tp: TracerProvider[IO] = testkit.tracerProvider
+        val metadata = new RecordMetadata(new TopicPartition("orders", partition), offset, 0, -1L, 0, 0)
+        for {
+          tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default.withBatchSpanMode(BatchSpanMode.SharedSendSpan))
+          _ <- tracer
+            .producerSpans(provider)
+            .produce(Chunk.from(List.fill(count)(ProducerRecord("orders", "key", "value"))))(
+              StubKafkaProducer.withResultMetadata[String, String](metadata).produce
+            )
+            .flatten
+          finished <- testkit.finishedSpans
+        } yield assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(
+              SpanExpectation
+                .producer("send orders")
+                .scopeName("fs2.kafka")
+                .attributes(
+                  AttributesExpectation.where("only available single-record result metadata must be included") {
+                    attributes =>
+                      attributes.get(MessagingExperimentalAttributes.MessagingDestinationPartitionId) ==
+                        Option.when(count == 1 && partition >= 0)(
+                          MessagingExperimentalAttributes.MessagingDestinationPartitionId(partition.toString)
+                        ) &&
+                        attributes.get(MessagingExperimentalAttributes.MessagingKafkaOffset) ==
+                        Option.when(count == 1 && offset >= 0)(
+                          MessagingExperimentalAttributes.MessagingKafkaOffset(offset)
+                        )
+                  }
+                )
+            )
+          )
+        )
       }
     }
   }
