@@ -215,19 +215,27 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
           producer <- testkit.tracedProducer(StubKafkaProducer.withResultMetadata[String, String](metadata), config)
           _ <- producer.produce(ProducerRecords.one(ProducerRecord("topic", "key", "value").withPartition(3))).flatten
           finished <- testkit.finishedSpans
-        } yield {
-          assertEquals(finished.size, 1)
-          val attributes = finished.head.getAttributes
-          assertEquals(
-            attributes.get(io.opentelemetry.api.common.AttributeKey.stringKey("messaging.destination.partition.id")),
-            if (knownResult) "0" else if (source == "input") "3" else "5"
+        } yield assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(
+              SpanExpectation
+                .producer("send topic")
+                .scopeName("fs2.kafka")
+                .attributes(
+                  AttributesExpectation.where("result metadata must preserve attribute precedence") { attributes =>
+                    val partition = if (knownResult) "0" else if (source == "input") "3" else "5"
+                    val offset = if (knownResult) Some(0L) else if (source == "input") None else Some(100L)
+                    attributes
+                      .get(MessagingExperimentalAttributes.MessagingDestinationPartitionId)
+                      .contains(MessagingExperimentalAttributes.MessagingDestinationPartitionId(partition)) &&
+                    attributes.get(MessagingExperimentalAttributes.MessagingKafkaOffset) ==
+                      offset.map(MessagingExperimentalAttributes.MessagingKafkaOffset(_))
+                  }
+                )
+            )
           )
-          assertEquals(
-            Option(attributes.get(io.opentelemetry.api.common.AttributeKey.longKey("messaging.kafka.offset")))
-              .map(_.longValue),
-            if (knownResult) Some(0L) else if (source == "input") None else Some(100L)
-          )
-        }
+        )
       }
     }
   }

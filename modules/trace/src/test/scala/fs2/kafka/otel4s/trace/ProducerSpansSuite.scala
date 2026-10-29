@@ -21,6 +21,7 @@ import fs2.Chunk
 import fs2.kafka._
 import org.apache.kafka.clients.producer.RecordMetadata
 import org.apache.kafka.common.TopicPartition
+import org.typelevel.otel4s.oteljava.testkit.AttributesExpectation
 import org.typelevel.otel4s.oteljava.testkit.trace.{SpanExpectation, StatusExpectation, TraceForestExpectation}
 import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
 import org.typelevel.otel4s.trace.TracerProvider
@@ -143,21 +144,29 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
             )
             .flatten
           finished <- testkit.finishedSpans
-        } yield {
-          assertEquals(finished.size, 1)
-          val attributes = finished.head.getAttributes
-          assertEquals(
-            Option(
-              attributes.get(io.opentelemetry.api.common.AttributeKey.stringKey("messaging.destination.partition.id"))
-            ),
-            Option.when(count == 1 && partition >= 0)(partition.toString)
+        } yield assertExpected(
+          finished,
+          TraceForestExpectation.unordered(
+            root(
+              SpanExpectation
+                .producer("send orders")
+                .scopeName("fs2.kafka")
+                .attributes(
+                  AttributesExpectation.where("only available single-record result metadata must be included") {
+                    attributes =>
+                      attributes.get(MessagingExperimentalAttributes.MessagingDestinationPartitionId) ==
+                        Option.when(count == 1 && partition >= 0)(
+                          MessagingExperimentalAttributes.MessagingDestinationPartitionId(partition.toString)
+                        ) &&
+                        attributes.get(MessagingExperimentalAttributes.MessagingKafkaOffset) ==
+                        Option.when(count == 1 && offset >= 0)(
+                          MessagingExperimentalAttributes.MessagingKafkaOffset(offset)
+                        )
+                  }
+                )
+            )
           )
-          assertEquals(
-            Option(attributes.get(io.opentelemetry.api.common.AttributeKey.longKey("messaging.kafka.offset")))
-              .map(_.longValue),
-            Option.when(count == 1 && offset >= 0)(offset)
-          )
-        }
+        )
       }
     }
   }
