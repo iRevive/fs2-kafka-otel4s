@@ -40,7 +40,9 @@ sealed trait ProducerSpans[F[_]] {
     * The outer effect submits records; the returned acknowledgment effect completes and finalizes the send span.
     * Evaluate both stages, normally with `.flatten`. Abandoning the acknowledgment effect leaves the send span open.
     * Empty input still calls `send`, without creating spans or resolving metadata. Each invocation resolves metadata
-    * through the supplied provider. Transaction orchestration belongs to the caller or [[TracedKafkaProducer]].
+    * through the supplied provider. Generated create spans cover each record's preparation and header injection, ending
+    * before submission; their contexts remain available for propagation and send links. Transaction orchestration
+    * belongs to the caller or [[TracedKafkaProducer]].
     */
   def produce[K: KafkaMessageKey, V](records: ProducerRecords[K, V])(
       send: ProducerRecords[K, V] => F[F[ProducerResult[K, V]]]
@@ -91,7 +93,7 @@ private[trace] object ProducerSpans {
       } else {
         metadata.get.flatMap { resolved =>
           val clientId = resolved.clientId
-          prepareBatch(records, clientId).use { prepared =>
+          prepareBatch(records, clientId).flatMap { prepared =>
             val spanContext = Semconv.sendSpanContext(prepared.records, clientId)
             val spanSetup = config.sendSpanSetup(spanContext)
 
@@ -174,12 +176,12 @@ private[trace] object ProducerSpans {
         record: ProducerRecord[K, V],
         createRecordSpan: Boolean,
         clientId: Option[String]
-    ): Resource[F, PreparedRecord[K, V]] =
-      Resource
-        .eval(Tracer[F].joinOrRoot(record.headers)(Tracer[F].currentSpanContext))
+    ): F[PreparedRecord[K, V]] =
+      Tracer[F]
+        .joinOrRoot(record.headers)(Tracer[F].currentSpanContext)
         .flatMap {
           case Some(ctx) =>
-            Resource.pure(
+            MonadCancelThrow[F].pure(
               PreparedRecord(
                 record = record,
                 needsSendSpanContextInjection = false,
@@ -191,12 +193,13 @@ private[trace] object ProducerSpans {
             Tracer[F]
               .spanBuilder(Semconv.createSpanName(record.topic))
               .withSpanKind(SpanKind.Producer)
+              .withFinalizationStrategy(KafkaTracer.Config.Defaults.spanFinalizationStrategy)
               .addAttributes(
                 Semconv.createAttributes(record, clientId) ++ config.constAttributes
               )
               .build
               .resource
-              .evalMap { res =>
+              .use { res =>
                 res
                   .trace(injectHeaders(record))
                   .map { injected =>
@@ -209,7 +212,7 @@ private[trace] object ProducerSpans {
               }
 
           case None =>
-            Resource.pure(
+            MonadCancelThrow[F].pure(
               PreparedRecord(
                 record = record,
                 needsSendSpanContextInjection = true,
@@ -221,7 +224,7 @@ private[trace] object ProducerSpans {
     private def prepareBatch[K: KafkaMessageKey, V](
         records: ProducerRecords[K, V],
         clientId: Option[String]
-    ): Resource[F, PreparedBatch[K, V]] = {
+    ): F[PreparedBatch[K, V]] = {
       val useCreateSpans =
         records.size > 1 && config.batchSpanMode == BatchSpanMode.PerRecordSpans
 

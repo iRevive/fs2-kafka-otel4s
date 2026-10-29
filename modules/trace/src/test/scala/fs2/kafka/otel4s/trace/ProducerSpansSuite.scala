@@ -22,7 +22,13 @@ import fs2.kafka._
 import org.apache.kafka.clients.producer.RecordMetadata
 import org.apache.kafka.common.TopicPartition
 import org.typelevel.otel4s.oteljava.testkit.AttributesExpectation
-import org.typelevel.otel4s.oteljava.testkit.trace.{SpanExpectation, StatusExpectation, TraceForestExpectation}
+import org.typelevel.otel4s.oteljava.testkit.trace.{
+  LinkSetExpectation,
+  SpanExpectation,
+  StatusExpectation,
+  TraceForestExpectation
+}
+import org.typelevel.otel4s.semconv.attributes.ErrorAttributes
 import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
 import org.typelevel.otel4s.trace.TracerProvider
 
@@ -38,9 +44,15 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
   private def createSpan = root(
     SpanExpectation
       .producer("create orders")
+      .status(StatusExpectation.unset)
       .scopeName("fs2.kafka")
-      .attributesSubset(
-        MessagingExperimentalAttributes.MessagingClientId("explicit-client")
+      .attributes(
+        AttributesExpectation.where("must include the client ID and omit error.type") { attributes =>
+          attributes
+            .get(MessagingExperimentalAttributes.MessagingClientId)
+            .contains(MessagingExperimentalAttributes.MessagingClientId("explicit-client")) &&
+          attributes.get(ErrorAttributes.ErrorType).isEmpty
+        }
       )
   )
 
@@ -56,14 +68,24 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
           completed <- Ref[IO].of(false)
           spans = tracer.producerSpans(provider)
           await <- spans.produce(records ++ records) { prepared =>
-            IO {
-              assertEquals(prepared.size, 2)
-              assert(prepared.forall(_.headers.exists("traceparent")))
-            }.as(
-              completed
-                .set(true)
-                .as(Chunk.empty[(ProducerRecord[String, String], RecordMetadata)])
-            )
+            testkit.finishedSpans
+              .flatMap { finished =>
+                IO {
+                  assertExpected(
+                    finished,
+                    if (mode == BatchSpanMode.PerRecordSpans)
+                      TraceForestExpectation.unordered(createSpan, createSpan)
+                    else TraceForestExpectation.empty
+                  )
+                  assertEquals(prepared.size, 2)
+                  assert(prepared.forall(_.headers.exists("traceparent")))
+                }
+              }
+              .as(
+                completed
+                  .set(true)
+                  .as(Chunk.empty[(ProducerRecord[String, String], RecordMetadata)])
+              )
           }
           before <- testkit.finishedSpans
           isCompleted <- completed.get
@@ -79,6 +101,7 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
           _ <- await
           after <- testkit.finishedSpans
         } yield {
+          val creates = after.filter(_.getName == "create orders")
           assertExpected(
             after,
             if (mode == BatchSpanMode.PerRecordSpans)
@@ -88,6 +111,15 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
                 root(
                   SpanExpectation
                     .client("send orders")
+                    .links(
+                      LinkSetExpectation.predicate("must link to both distinct create spans") { links =>
+                        creates.map(_.getSpanId).distinct.size == 2 &&
+                        links.map(_.getSpanContext).toSet == creates.map(_.getSpanContext).toSet
+                      }
+                    )
+                    .where("create spans must end before submission") { send =>
+                      creates.forall(_.getEndEpochNanos <= send.getStartEpochNanos)
+                    }
                     .attributesSubset(
                       MessagingExperimentalAttributes.MessagingClientId("explicit-client")
                     )
@@ -249,7 +281,7 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
           tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
           result <- tracer
             .producerSpans(provider)
-            .produce(records) { _ =>
+            .produce(records ++ records) { _ =>
               if (ackStage) IO.pure(IO.raiseError[ProducerResult[String, String]](failure))
               else IO.raiseError[IO[ProducerResult[String, String]]](failure)
             }
@@ -258,7 +290,19 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
           finished <- testkit.finishedSpans
         } yield {
           assertEquals(result, Left(failure))
-          assertExpected(finished, TraceForestExpectation.unordered(root(sendSpan.status(StatusExpectation.error))))
+          assertExpected(
+            finished,
+            TraceForestExpectation.unordered(
+              createSpan,
+              createSpan,
+              root(
+                SpanExpectation
+                  .client("send orders")
+                  .status(StatusExpectation.error)
+                  .attributesSubset(ErrorAttributes.ErrorType("java.lang.RuntimeException"))
+              )
+            )
+          )
         }
       }
     }
@@ -272,7 +316,7 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
           pending = started.complete(()) *> IO.never[ProducerResult[String, String]]
           fiber <- tracer
             .producerSpans(provider)
-            .produce(records) { _ =>
+            .produce(records ++ records) { _ =>
               if (ackStage) IO.pure(pending) else pending.map(IO.pure(_))
             }
             .flatten
@@ -282,7 +326,16 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
           finished <- testkit.finishedSpans
         } yield assertExpected(
           finished,
-          TraceForestExpectation.unordered(root(sendSpan.status(StatusExpectation.error)))
+          TraceForestExpectation.unordered(
+            createSpan,
+            createSpan,
+            root(
+              SpanExpectation
+                .client("send orders")
+                .status(StatusExpectation.error)
+                .attributesSubset(ErrorAttributes.ErrorType("canceled"))
+            )
+          )
         )
       }
     }
