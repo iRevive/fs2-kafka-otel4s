@@ -86,7 +86,6 @@ lazy val site = project
   .settings(
     mdocIn := file("docs"),
     mdocOut := target.value / "mdoc",
-    mdocVariables := Map("VERSION" -> version.value),
     laikaConfig := LaikaConfig.defaults.withRawContent,
     tlSiteHelium := tlSiteHelium.value.all
       .metadata(title = Some("fs2-kafka-otel4s"), language = Some("en"))
