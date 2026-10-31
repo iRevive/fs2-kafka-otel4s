@@ -42,6 +42,24 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
   final class UnrepresentableKey(val value: String)
   final class WrappedKey(val value: String)
 
+  test("parseBootstrapServers selects the first server and parses its port") {
+    assertEquals(
+      KafkaTracer.Config.parseBootstrapServers("kafka-1.internal:9092,kafka-2.internal:9093"),
+      Some(("kafka-1.internal", Some(9092)))
+    )
+  }
+
+  test("parseBootstrapServers leaves the port unset when it is not provided") {
+    assertEquals(
+      KafkaTracer.Config.parseBootstrapServers("kafka.internal"),
+      Some(("kafka.internal", None))
+    )
+  }
+
+  test("parseBootstrapServers returns None for an empty string") {
+    assertEquals(KafkaTracer.Config.parseBootstrapServers(""), None)
+  }
+
   @nowarn("msg=method withSerializers in trait TracedKafkaProducer is deprecated")
   private def remapWithSerializers(
       producer: TracedKafkaProducer[IO, String, String]
@@ -592,6 +610,40 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
                     .scopeName("fs2.kafka")
                     .attributesSubset(
                       ServerAttributes.ServerAddress("kafka.internal"),
+                      ServerAttributes.ServerPort(9092L)
+                    )
+                )
+              )
+            )
+          }
+        } yield ()
+      }
+  }
+
+  test("configured bootstrap servers use the first server address and port on spans") {
+    KafkaTracerTestkit
+      .create()
+      .use { testkit =>
+        val bootstrapServers = "kafka-1.internal:9092,kafka-2.internal:9092"
+        val config = KafkaTracer.Config.default.withServerAddress(bootstrapServers)
+
+        for {
+          producer <- StubKafkaProducer.recorder[String, String]()
+          tracedProducer <- testkit.tracedProducer(producer, config)
+          _ <- tracedProducer
+            .produce(ProducerRecords.one(ProducerRecord("topic", "key", "value")))
+            .flatten
+          spans <- testkit.finishedSpans
+          _ <- IO {
+            assertExpected(
+              spans,
+              TraceForestExpectation.unordered(
+                root(
+                  SpanExpectation
+                    .producer("send topic")
+                    .scopeName("fs2.kafka")
+                    .attributesSubset(
+                      ServerAttributes.ServerAddress("kafka-1.internal"),
                       ServerAttributes.ServerPort(9092L)
                     )
                 )
