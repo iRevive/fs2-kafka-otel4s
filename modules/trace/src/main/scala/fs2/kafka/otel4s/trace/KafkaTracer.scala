@@ -176,7 +176,9 @@ object KafkaTracer {
 
     /** Adds `server.address` and, when provided, `server.port` to emitted spans.
       *
-      * Use values derived from the logical Kafka broker or service address, not connection-level peer information.
+      * Use values derived from the logical Kafka broker or service address, not connection-level peer information. For
+      * a Kafka `bootstrap.servers` value, use the one-argument overload; it uses the first broker and extracts its port
+      * when present.
       *
       * @example
       *   {{{
@@ -185,6 +187,22 @@ object KafkaTracer {
       *   }}}
       */
     def withServerAddress(serverAddress: String, serverPort: Option[Int]): Config
+
+    /** Adds the first broker from a Kafka `bootstrap.servers` value to emitted spans.
+      *
+      * For a `host:port` entry, `server.address` and `server.port` are set separately. If the first entry has no port,
+      * only `server.address` is set. Any later comma-separated brokers are ignored.
+      *
+      * @example
+      *   {{{
+      * val config = KafkaTracer.Config.default.withServerAddress("kafka-1:9092,kafka-2:9092")
+      *   }}}
+      */
+    def withServerAddress(bootstrapServers: String): Config =
+      Config.parseBootstrapServers(bootstrapServers) match {
+        case Some((serverAddress, serverPort)) => withServerAddress(serverAddress, serverPort)
+        case None                              => this
+      }
 
   }
 
@@ -402,6 +420,19 @@ object KafkaTracer {
 
     }
 
+    private[trace] def parseBootstrapServers(bootstrapServers: String): Option[(String, Option[Int])] = {
+      bootstrapServers.split(",").headOption.map(_.trim).filter(_.nonEmpty).map { firstServer =>
+        firstServer.split(":") match {
+          case Array(host, portStr) =>
+            portStr.toIntOption match {
+              case Some(port) => (host, Some(port))
+              case None       => (firstServer, None)
+            }
+          case Array(host) => (host, None)
+          case _           => (firstServer, None)
+        }
+      }
+    }
   }
 
   def apply[F[_]](implicit ev: KafkaTracer[F]): KafkaTracer[F] = ev
@@ -419,7 +450,8 @@ object KafkaTracer {
     * The returned tracer is not yet bound to a specific Kafka producer. Bind it to a [[fs2.kafka.KafkaProducer]] so the
     * resulting spans can include static client metadata such as `client.id`. If you want to attach logical broker
     * endpoint attributes such as `server.address` and `server.port`, provide them explicitly through
-    * [[KafkaTracer.Config.withServerAddress]].
+    * [[KafkaTracer.Config.withServerAddress(serverAddress:String,serverPort:Option[Int])*]] or
+    * [[KafkaTracer.Config.withServerAddress(bootstrapServers:String)*]].
     */
   def create[F[_]: Concurrent: Parallel: TracerProvider](
       config: Config
@@ -437,7 +469,8 @@ object KafkaTracer {
     * The returned tracer is not yet bound to a specific Kafka producer. Bind it to a [[fs2.kafka.KafkaProducer]] so the
     * resulting spans can include static client metadata such as `client.id`. If you want to attach logical broker
     * endpoint attributes such as `server.address` and `server.port`, provide them explicitly through
-    * [[KafkaTracer.Config.withServerAddress]].
+    * [[KafkaTracer.Config.withServerAddress(serverAddress:String,serverPort:Option[Int])*]] or
+    * [[KafkaTracer.Config.withServerAddress(bootstrapServers:String)*]]
     */
   def resource[F[_]: Concurrent: Parallel: TracerProvider](
       config: Config
