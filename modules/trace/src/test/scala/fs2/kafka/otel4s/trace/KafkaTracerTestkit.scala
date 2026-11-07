@@ -22,6 +22,7 @@ import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator
 import io.opentelemetry.context.propagation.TextMapPropagator
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder
 import io.opentelemetry.sdk.trace.data.SpanData
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.oteljava.testkit.OtelJavaTestkit
 import org.typelevel.otel4s.trace.{Tracer, TracerProvider}
 
@@ -29,6 +30,8 @@ final class KafkaTracerTestkit(testkit: OtelJavaTestkit[IO])(implicit
     val tracerProvider: TracerProvider[IO],
     val appTracer: Tracer[IO]
 ) {
+
+  implicit val contextManager: ContextManager[IO] = testkit.contextManager
 
   def tracedProducer[K: KafkaMessageKey, V](
       producer: KafkaProducer.WithSettings[IO, K, V],

@@ -22,6 +22,7 @@ import fs2.{Chunk, Pipe, Stream}
 import fs2.kafka._
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
 import org.apache.kafka.common.TopicPartition
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.oteljava.testkit.AttributesExpectation
 import org.typelevel.otel4s.oteljava.testkit.trace.{SpanExpectation, TraceForestExpectation}
 import org.typelevel.otel4s.semconv.experimental.attributes.{
@@ -45,6 +46,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("explicit and consumer-bound spans preserve policy, precedence, and extracted links") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       import testkit.appTracer
 
       val metadata = ConsumerMetadata(Some("orders-client"), Some("orders-group"))
@@ -149,6 +151,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("one explicit handle accepts records with different key types and two handles select metadata explicitly") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       for {
         tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
         first = tracer.consumerSpans(provider(ConsumerMetadata(Some("first-client"), Some("group-a"))))
@@ -195,6 +198,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("the four explicit process and receive overloads create the configured spans") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       val record = ConsumerRecord("topic", 0, 1L, "key", "value")
       val committable = StubKafkaConsumer.committableRecord(record)
 
@@ -221,6 +225,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("processBatch creates one linked span around one callback and summarizes mixed records") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       import testkit.appTracer
       for {
         producer <- testkit.tracedProducer[String, String](StubKafkaProducer.metadataOnly("producer"))
@@ -310,6 +315,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("processBatch uses its own setup context and emits count for a singleton batch") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       val record = ConsumerRecord("orders", 3, 21L, "key", "value")
       for {
         tracer <- KafkaTracer.create[IO](
@@ -351,6 +357,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("single-record and batch process setup hooks suppress independently") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       val record = ConsumerRecord("topic", 0, 1L, "key", "value")
       val config = KafkaTracer.Config.default.withBatchProcessSpanSetup(_ => None)
       for {
@@ -369,6 +376,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("explicit consumer spans evaluate the supplied provider, while noop does not") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       val record = ConsumerRecord("topic", 0, 1L, "key", "value")
       for {
         gets <- Ref[IO].of(0)
@@ -423,6 +431,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("suppressed, empty, and noop receive/process calls still evaluate the supplied effect") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       val record = ConsumerRecord("topic", 0, 1L, "key", "value")
       for {
         calls <- Ref[IO].of(0)
@@ -459,6 +468,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("explicit process spans finalize on failure and cancellation") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       val failure = new RuntimeException("process failed")
       val record = ConsumerRecord("topic", 0, 1L, "key", "value")
 
@@ -483,6 +493,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("commitOffsets describes only supplied topic partitions and ignores ambient parenting") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       import testkit.appTracer
 
       val offsets = Map(
@@ -568,6 +579,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("single offset commit may report its partition but never the next offset as a record offset") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       val offsets = Map(new TopicPartition("orders", 3) -> new OffsetAndMetadata(99L))
       for {
         tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
@@ -605,6 +617,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("empty and noop offset commits skip metadata while suppressed commits still evaluate effects") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       val offset = Map(new TopicPartition("orders", 0) -> new OffsetAndMetadata(1L))
       val providerCalls = new AtomicInteger(0)
       val metadata = new ConsumerMetadata.Provider[IO] {
@@ -639,6 +652,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("commitOffsets finalizes spans after errors and cancellation") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       val offsets = Map(new TopicPartition("orders", 0) -> new OffsetAndMetadata(1L))
       val failure = new RuntimeException("commit failed")
       for {
@@ -662,6 +676,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("commitBatchWithin batches offsets, keeps the highest position, and traces each batch") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       for {
         tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
         spans = tracer.consumerSpans(provider(ConsumerMetadata(Some("client"), Some("group"))))
@@ -717,6 +732,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("commitBatchWithin retains distinct committers and flushes a partial batch on its timer") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       for {
         tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
         spans = tracer.consumerSpans(provider(ConsumerMetadata(None, None)))
@@ -764,6 +780,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("commitBatchWithin commits with noop and disabled spans and skips empty input") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       for {
         tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default.withoutCommitSpans)
         disabled = tracer.consumerSpans(provider(ConsumerMetadata(None, None)))
@@ -790,6 +807,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("commitBatchWithin stops after failure and finalizes a canceled commit span") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       val failure = new RuntimeException("commit failed")
       for {
         tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
@@ -833,6 +851,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("KafkaTracer.consumerSpans uses the supplied provider for commit metadata") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       for {
         tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
         committer = KafkaCommitter[IO](_ => IO.unit, IO.raiseError(new AssertionError("metadata")))
@@ -884,6 +903,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
   test("KafkaTracer.consumerSpans commit pipe can be reused across stream runs") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       for {
         tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
         commits <- Ref[IO].of(0)

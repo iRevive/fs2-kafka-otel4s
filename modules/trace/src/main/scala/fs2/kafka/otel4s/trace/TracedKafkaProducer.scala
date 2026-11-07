@@ -24,6 +24,7 @@ import fs2.Chunk
 import fs2.kafka._
 import org.apache.kafka.clients.consumer.{ConsumerGroupMetadata, OffsetAndMetadata}
 import org.apache.kafka.common.{Metric, MetricName, PartitionInfo, TopicPartition}
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.trace._
 
 /** A tracing handle bound to a specific [[fs2.kafka.KafkaProducer]].
@@ -142,7 +143,7 @@ object TracedKafkaProducer {
   ): TracedKafkaProducer[F, K, V] =
     new Noop[F, K, V](underlying)
 
-  final private[otel4s] class Impl[F[_]: Concurrent: Tracer, K: KafkaMessageKey, V](
+  final private[otel4s] class Impl[F[_]: Concurrent: Tracer: ContextManager, K: KafkaMessageKey, V](
       underlying: KafkaProducer.WithSettings[F, K, V],
       config: KafkaTracer.Config,
   ) extends TracedKafkaProducer[F, K, V] {

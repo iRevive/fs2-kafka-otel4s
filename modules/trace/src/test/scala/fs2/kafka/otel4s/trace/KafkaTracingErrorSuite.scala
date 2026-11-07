@@ -26,6 +26,7 @@ import io.opentelemetry.context.Context
 import io.opentelemetry.context.propagation.{TextMapGetter => JTextMapGetter, TextMapPropagator, TextMapSetter}
 import io.opentelemetry.sdk.common.CompletableResultCode
 import io.opentelemetry.sdk.trace.{ReadWriteSpan, ReadableSpan, SpanProcessor}
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.oteljava.testkit.trace.{SpanExpectation, StatusExpectation, TraceForestExpectation}
 import org.typelevel.otel4s.semconv.attributes.ErrorAttributes
 import org.typelevel.otel4s.trace.Tracer
@@ -253,6 +254,7 @@ final class KafkaTracingErrorSuite extends KafkaTracingTestSupport {
           IO.asyncForIO,
           cancelOnInjection
         )
+        implicit val contextManager: ContextManager[IO] = testkit.contextManager
         val spans = ProducerSpans[IO](
           ProducerMetadata.Provider.constant[IO](ProducerMetadata(None)),
           KafkaTracer.Config.default
