@@ -108,6 +108,8 @@ def sendWithTracing(
 
 The callback must publish the records it receives, including injected headers.
 Use `.flatten` to submit records and wait for acknowledgment. Skipping acknowledgment leaves the send span open.
+For nonempty input, acknowledgment restores the full submission context, including baggage and custom values,
+even if send spans are disabled. See [Full-context producer acknowledgment](../getting-started/configuration.md#full-context-producer-acknowledgment).
 
 A handle accepts different key and value types at each call. It uses the same configuration as the producer adapter.
 You handle transactions.

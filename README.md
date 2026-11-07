@@ -21,11 +21,12 @@ import fs2.kafka.{ConsumerSettings, KafkaConsumer}
 import fs2.kafka.KafkaConsumer._
 import fs2.kafka.otel4s.trace.KafkaTracer
 import fs2.kafka.otel4s.trace.syntax._
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.trace.TracerProvider
 
 def consumeOrders(
     settings: ConsumerSettings[IO, String, String]
-)(implicit provider: TracerProvider[IO]): IO[Nothing] =
+)(implicit contextManager: ContextManager[IO], provider: TracerProvider[IO]): IO[Nothing] =
   KafkaConsumer
     .stream[IO, String, String](settings)
     .subscribeTo("orders")
@@ -33,7 +34,7 @@ def consumeOrders(
     .consumeRecordTraced(record => IO.println(record.value))
 ```
 
-Supply an otel4s `TracerProvider[IO]` with your backend and exporter configured.
+Supply an otel4s `TracerProvider[IO]` and `ContextManager[IO]` from the same configured backend instance.
 
 `consumeRecordTraced` commits each consumed chunk after all its record handlers succeed. A failed or canceled
 handler skips that commit. The consumer runs until it fails or is canceled.

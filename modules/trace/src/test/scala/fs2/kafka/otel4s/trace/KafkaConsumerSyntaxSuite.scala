@@ -16,6 +16,7 @@
 
 package fs2.kafka.otel4s.trace
 
+import org.typelevel.otel4s.context.ContextManager
 import cats.effect.{IO, Ref}
 import fs2.{Chunk, Stream}
 import fs2.kafka._
@@ -97,6 +98,7 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
       val underlying = StubKafkaConsumer.metadataOnly[String, String]()
 
       implicit val tracerProvider = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
 
       Stream
         .emit(underlying)

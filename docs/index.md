@@ -10,7 +10,7 @@ Add the trace module dependency:
 libraryDependencies += "io.github.irevive" %% "fs2-kafka-otel4s-trace" % "@VERSION@"
 ```
 
-Supply a configured otel4s `TracerProvider[IO]`. The example uses Kafka at `localhost:9092` and an `orders` topic.
+Supply a configured otel4s `TracerProvider[IO]` and `ContextManager[IO]` from the same backend instance. The example uses Kafka at `localhost:9092` and an `orders` topic.
 
 Import the tracing syntax and add `.traced(config)` before consuming records:
 
@@ -20,6 +20,7 @@ import fs2.kafka.{ConsumerSettings, Deserializer, KafkaConsumer}
 import fs2.kafka.KafkaConsumer._
 import fs2.kafka.otel4s.trace.KafkaTracer
 import fs2.kafka.otel4s.trace.syntax._
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.trace.TracerProvider
 
 val consumerSettings: ConsumerSettings[IO, String, String] =
@@ -31,7 +32,7 @@ val consumerSettings: ConsumerSettings[IO, String, String] =
     .withClientId("orders-consumer")
     .withGroupId("orders-group")
 
-def consumeOrders(implicit tracerProvider: TracerProvider[IO]): IO[Nothing] =
+def consumeOrders(implicit contextManager: ContextManager[IO], tracerProvider: TracerProvider[IO]): IO[Nothing] =
   KafkaConsumer
     .stream[IO, String, String](consumerSettings)
     .subscribeTo("orders")

@@ -18,7 +18,7 @@ Both consume helpers process partitions concurrently. Records within each partit
 ## Set up the consumer
 
 The examples use the same settings as the [quick start](../index.md#quick-start). Supply your configured
-`TracerProvider[IO]`; Kafka must be available at `localhost:9092` with an `orders` topic.
+`TracerProvider[IO]` and `ContextManager[IO]` from the same backend instance; Kafka must be available at `localhost:9092` with an `orders` topic.
 
 ```scala mdoc:silent
 import cats.effect.IO
@@ -26,6 +26,7 @@ import fs2.kafka.{ConsumerSettings, Deserializer, KafkaConsumer}
 import fs2.kafka.KafkaConsumer._
 import fs2.kafka.otel4s.trace.KafkaTracer
 import fs2.kafka.otel4s.trace.syntax._
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.trace.TracerProvider
 
 val consumerSettings: ConsumerSettings[IO, String, String] =
@@ -82,7 +83,7 @@ It creates one process span with the message count, even for a chunk of one reco
 import cats.syntax.all._
 import fs2.kafka.consumer.KafkaConsumeChunk.CommitNow
 
-def consumeChunkBatches(implicit tracerProvider: TracerProvider[IO]): IO[Nothing] =
+def consumeChunkBatches(implicit contextManager: ContextManager[IO], tracerProvider: TracerProvider[IO]): IO[Nothing] =
   KafkaConsumer
     .stream[IO, String, String](consumerSettings)
     .subscribeTo("orders")
@@ -118,7 +119,7 @@ import org.typelevel.otel4s.trace.Tracer
 
 def consumeWithChildSpans(
     handle: ConsumerRecord[String, String] => IO[Unit]
-)(implicit tracerProvider: TracerProvider[IO], tracer: Tracer[IO]): IO[Nothing] =
+)(implicit contextManager: ContextManager[IO], tracerProvider: TracerProvider[IO], tracer: Tracer[IO]): IO[Nothing] =
   KafkaConsumer
     .stream[IO, String, String](consumerSettings)
     .subscribeTo("orders")
@@ -155,7 +156,7 @@ Use `consumer.spans.commitBatchWithin` to trace commits:
 import fs2.Stream
 import scala.concurrent.duration._
 
-def consumeRecords(implicit tracerProvider: TracerProvider[IO]): Stream[IO, Unit] =
+def consumeRecords(implicit contextManager: ContextManager[IO], tracerProvider: TracerProvider[IO]): Stream[IO, Unit] =
   KafkaConsumer
     .stream[IO, String, String](consumerSettings)
     .subscribeTo("orders")

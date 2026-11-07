@@ -93,11 +93,12 @@ tracer can also be passed to `.traced(kafkaTracer)` in stream syntax.
 import cats.effect.Resource
 import fs2.kafka.{ConsumerSettings, KafkaConsumer, KafkaProducer, ProducerSettings}
 import fs2.kafka.otel4s.trace.TracedKafkaConsumer
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.trace.TracerProvider
 
 def createTracedProducer(
     producerSettings: ProducerSettings[IO, String, String]
-)(implicit tracerProvider: TracerProvider[IO]): Resource[IO, TracedKafkaProducer[IO, String, String]] =
+)(implicit contextManager: ContextManager[IO], tracerProvider: TracerProvider[IO]): Resource[IO, TracedKafkaProducer[IO, String, String]] =
   for {
     kafkaTracer <- KafkaTracer.resource[IO](tracerConfig)
     producer <- KafkaProducer.resource[IO, String, String](producerSettings)
@@ -105,7 +106,7 @@ def createTracedProducer(
 
 def createTracedConsumer(
     consumerSettings: ConsumerSettings[IO, String, String]
-)(implicit tracerProvider: TracerProvider[IO]): Resource[IO, TracedKafkaConsumer[IO, String, String]] =
+)(implicit contextManager: ContextManager[IO], tracerProvider: TracerProvider[IO]): Resource[IO, TracedKafkaConsumer[IO, String, String]] =
   for {
     kafkaTracer <- KafkaTracer.resource[IO](tracerConfig)
     consumer <- KafkaConsumer.resource[IO, String, String](consumerSettings)
@@ -123,3 +124,26 @@ For commits, use metadata from the consumer that produced the offsets. Use `Cons
 when its identity is unavailable.
 
 The commit batching method requires `Temporal` for timed flushes and derives `Parallel` internally for separate committers.
+
+## Full-context producer acknowledgment
+
+`KafkaTracer.create`, `KafkaTracer.resource`, and `.traced(config)` require an implicit
+`ContextManager[F]` alongside `TracerProvider[F]`. Supply both from the same configured
+otel4s instance so they share context storage:
+
+```scala
+implicit val tracerProvider: TracerProvider[IO] = otel4s.tracerProvider
+implicit val contextManager: ContextManager[IO] = otel4s.contextManager
+```
+
+Each nonempty producer submission captures the active context before calling the
+producer, including the send span when enabled, baggage, and custom context values.
+The returned acknowledgment effect restores that context around acknowledgment and
+its finalizers, even when run later in another fiber. The caller's context is restored
+after success, failure, or cancellation. Concurrent submissions keep separate contexts.
+This behavior also applies to standalone `ProducerSpans` and to disabled send spans.
+Empty inputs and no-op handles pass acknowledgment through without context capture.
+
+Capture does not change Kafka headers or extract additional context from records.
+It does not extend the lifetime of an ambient application span. Evaluate the returned
+acknowledgment effect, normally with `.flatten`, to finish the send span.

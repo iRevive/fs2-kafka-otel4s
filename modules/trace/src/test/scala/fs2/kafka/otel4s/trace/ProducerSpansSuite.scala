@@ -21,6 +21,7 @@ import fs2.Chunk
 import fs2.kafka._
 import org.apache.kafka.clients.producer.RecordMetadata
 import org.apache.kafka.common.TopicPartition
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.oteljava.testkit.AttributesExpectation
 import org.typelevel.otel4s.oteljava.testkit.trace.{
   LinkSetExpectation,
@@ -66,6 +67,7 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
     test(s"client-free $mode sends prepared records and preserves two-stage completion") {
       KafkaTracerTestkit.create().use { testkit =>
         implicit val tp: TracerProvider[IO] = testkit.tracerProvider
+        implicit val contextManager: ContextManager[IO] = testkit.contextManager
         for {
           tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default.withBatchSpanMode(mode))
           completed <- Ref[IO].of(false)
@@ -138,6 +140,7 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
   test("one handle supports different key types and attaches broker result attributes") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tp: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       for {
         tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
         spans = tracer.producerSpans(provider)
@@ -169,6 +172,7 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
     test(s"result enrichment with partition=$partition offset=$offset count=$count") {
       KafkaTracerTestkit.create().use { testkit =>
         implicit val tp: TracerProvider[IO] = testkit.tracerProvider
+        implicit val contextManager: ContextManager[IO] = testkit.contextManager
         val metadata = new RecordMetadata(new TopicPartition("orders", partition), offset, 0, -1L, 0, 0)
         for {
           tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default.withBatchSpanMode(BatchSpanMode.SharedSendSpan))
@@ -209,6 +213,7 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
   test("empty and noop operations pass original records through without resolving metadata") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tp: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       val failingProvider = new ProducerMetadata.Provider[IO] {
         def get: IO[ProducerMetadata] = IO.raiseError(new AssertionError("metadata lookup"))
       }
@@ -240,6 +245,7 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
   test("suppression still injects ambient context and preserves recognized record headers") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val tp: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       for {
         tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default.withoutSendSpans)
         prepared <- testkit.appTracer.span("app").surround {
@@ -279,6 +285,7 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
     test(s"failure finalizes once at acknowledgment stage = $ackStage") {
       KafkaTracerTestkit.create().use { testkit =>
         implicit val tp: TracerProvider[IO] = testkit.tracerProvider
+        implicit val contextManager: ContextManager[IO] = testkit.contextManager
         val failure = new RuntimeException("send failed")
         for {
           tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
@@ -313,6 +320,7 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
     test(s"cancellation finalizes once at acknowledgment stage = $ackStage") {
       KafkaTracerTestkit.create().use { testkit =>
         implicit val tp: TracerProvider[IO] = testkit.tracerProvider
+        implicit val contextManager: ContextManager[IO] = testkit.contextManager
         for {
           tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
           started <- Deferred[IO, Unit]

@@ -21,6 +21,7 @@ import cats.syntax.functor._
 import cats.syntax.semigroup._
 import fs2.kafka.{KafkaConsumer, KafkaProducer}
 import org.typelevel.otel4s.semconv.attributes.{ErrorAttributes, ServerAttributes}
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.trace.{SpanFinalizer, StatusCode, Tracer, TracerProvider}
 import org.typelevel.otel4s.{Attribute, Attributes}
 
@@ -451,8 +452,12 @@ object KafkaTracer {
     * endpoint attributes such as `server.address` and `server.port`, provide them explicitly through
     * [[KafkaTracer.Config.withServerAddress(serverAddress:String,serverPort:Option[Int])*]] or
     * [[KafkaTracer.Config.withServerAddress(bootstrapServers:String)*]].
+    *
+    * The implicit context manager must share context storage with the tracer provider. Producer acknowledgments restore
+    * the submission context, including the send span, baggage, and custom values, even when evaluated in another fiber.
+    * The acknowledgment caller's context is restored on success, failure, or cancellation.
     */
-  def create[F[_]: Concurrent: TracerProvider](
+  def create[F[_]: Concurrent: TracerProvider: ContextManager](
       config: Config
   ): F[KafkaTracer[F]] =
     TracerProvider[F]
@@ -469,14 +474,15 @@ object KafkaTracer {
     * resulting spans can include static client metadata such as `client.id`. If you want to attach logical broker
     * endpoint attributes such as `server.address` and `server.port`, provide them explicitly through
     * [[KafkaTracer.Config.withServerAddress(serverAddress:String,serverPort:Option[Int])*]] or
-    * [[KafkaTracer.Config.withServerAddress(bootstrapServers:String)*]]
+    * [[KafkaTracer.Config.withServerAddress(bootstrapServers:String)*]]. The implicit context manager must share
+    * storage with the tracer provider; producer acknowledgments restore the full submission context as in [[create]].
     */
-  def resource[F[_]: Concurrent: TracerProvider](
+  def resource[F[_]: Concurrent: TracerProvider: ContextManager](
       config: Config
   ): Resource[F, KafkaTracer[F]] =
     Resource.eval(create(config))
 
-  final private class Impl[F[_]: Concurrent: Tracer](config: Config) extends KafkaTracer[F] {
+  final private class Impl[F[_]: Concurrent: Tracer: ContextManager](config: Config) extends KafkaTracer[F] {
 
     override def producer[K: KafkaMessageKey, V](
         producer: KafkaProducer.WithSettings[F, K, V]
