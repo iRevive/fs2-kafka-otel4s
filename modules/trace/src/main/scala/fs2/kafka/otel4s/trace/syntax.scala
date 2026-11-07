@@ -25,100 +25,6 @@ import fs2.kafka.{CommittableConsumerRecord, ConsumerRecord, KafkaConsumer}
 import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.trace.TracerProvider
 
-/** Local syntax for explicitly traced consumer chunk and record boundaries.
-  */
-trait ConsumerTracingSyntax {
-
-  implicit final class ConsumerRecordChunkTracingOps[K, V](
-      private val records: Chunk[ConsumerRecord[K, V]]
-  ) {
-
-    /** Evaluates `fa` inside a `poll` / `receive` span representing delivery of a non-committable chunk of records to
-      * application code.
-      *
-      * Is shorthand for:
-      *
-      * {{{
-      * tracedConsumer.receive(records)(fa)
-      * }}}
-      */
-    @deprecated("Select a ConsumerSpans handle and call spans.receive(records)(fa)", "0.3")
-    def receiveTraced[F[_], A](fa: F[A])(implicit
-        tracedConsumer: TracedKafkaConsumer[F, K, V]
-    ): F[A] =
-      tracedConsumer.receive(records)(fa)
-
-  }
-
-  implicit final class ConsumerChunkTracingOps[F[_], K, V](
-      private val records: Chunk[CommittableConsumerRecord[F, K, V]]
-  ) {
-
-    /** Evaluates `fa` inside a `poll` / `receive` span representing delivery of a committable chunk of records to
-      * application code.
-      *
-      * The commit handle is preserved, but span attributes are derived from the wrapped
-      * [[CommittableConsumerRecord.record]] values.
-      *
-      * Is shorthand for:
-      *
-      * {{{
-      * tracedConsumer.receiveCommittable(records)(fa)
-      * }}}
-      */
-    @deprecated("Select a ConsumerSpans handle and call spans.receiveCommittable(records)(fa)", "0.3")
-    def receiveTraced[A](fa: F[A])(implicit
-        tracedConsumer: TracedKafkaConsumer[F, K, V]
-    ): F[A] =
-      tracedConsumer.receiveCommittable(records)(fa)
-
-  }
-
-  implicit final class ConsumerRecordTracingOps[K, V](
-      private val record: ConsumerRecord[K, V]
-  ) {
-
-    /** Evaluates `fa` inside a `process` span using trace context extracted from the record headers when available.
-      *
-      * Is shorthand for:
-      *
-      * {{{
-      * tracedConsumer.process(record)(fa)
-      * }}}
-      */
-    @deprecated("Select a ConsumerSpans handle and call spans.process(record)(fa)", "0.3")
-    def processTraced[F[_], A](fa: F[A])(implicit
-        tracedConsumer: TracedKafkaConsumer[F, K, V]
-    ): F[A] =
-      tracedConsumer.process(record)(fa)
-
-  }
-
-  implicit final class CommittableConsumerRecordTracingOps[F[_], K, V](
-      private val record: CommittableConsumerRecord[F, K, V]
-  ) {
-
-    /** Evaluates `fa` inside a `process` span using trace context extracted from the record headers when available.
-      *
-      * This variant accepts a [[CommittableConsumerRecord]] directly and derives span attributes from its wrapped
-      * [[CommittableConsumerRecord.record]] value.
-      *
-      * Is shorthand for:
-      *
-      * {{{
-      * tracedConsumer.process(record)(fa)
-      * }}}
-      */
-    @deprecated("Select a ConsumerSpans handle and call spans.process(record)(fa)", "0.3")
-    def processTraced[A](fa: F[A])(implicit
-        tracedConsumer: TracedKafkaConsumer[F, K, V]
-    ): F[A] =
-      tracedConsumer.process(record)(fa)
-
-  }
-
-}
-
 /** Stream-level syntax for binding tracing to raw consumer streams.
   */
 trait KafkaConsumerStreamTracingSyntax {
@@ -175,24 +81,6 @@ trait TracedKafkaConsumerStreamTracingSyntax {
   implicit final class TracedKafkaConsumerStreamTracingOps[F[_], K, V](
       private val self: Stream[F, TracedKafkaConsumer[F, K, V]]
   ) {
-
-    /** Consumes from all assigned partitions concurrently through [[TracedKafkaConsumer.consumeChunk]].
-      *
-      * This helper keeps raw `consumeChunk` available on `Stream[TracedKafkaConsumer[...]]`. It delegates to
-      * [[TracedKafkaConsumer.consumeChunk]], so it does not add tracing by itself. Use [[consumeChunkTraced]] or
-      * [[consumeRecordTraced]] when you want `receive`, per-record `process`, and owned `commit` tracing.
-      *
-      * Is shorthand for:
-      *
-      * {{{
-      * tracedConsumers.evalMap(_.consumeChunk(chunkProcessor)).compile.onlyOrError
-      * }}}
-      */
-    @deprecated("Use tracedConsumer.underlying.consumeChunk", "0.3")
-    def consumeChunk(
-        chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
-    )(implicit F: Concurrent[F]): F[Nothing] =
-      self.evalMap(_.consumeChunk(chunkProcessor)).compile.onlyOrError
 
     /** Consumes from all assigned partitions concurrently, tracing each emitted chunk with `receive`, one batch
       * `process`, and owned `commit` spans.
@@ -409,11 +297,10 @@ trait KafkaProducerTracingSyntax {
 
 }
 
-/** Syntax imports for traced consumer chunk/record helpers and traced consumer stream helpers.
+/** Syntax imports for binding traced producers and consumers and consuming traced streams.
   */
 object syntax
-    extends ConsumerTracingSyntax
-    with KafkaConsumerStreamTracingSyntax
+    extends KafkaConsumerStreamTracingSyntax
     with TracedKafkaConsumerStreamTracingSyntax
     with KafkaProducerStreamTracingSyntax
     with KafkaProducerTracingSyntax

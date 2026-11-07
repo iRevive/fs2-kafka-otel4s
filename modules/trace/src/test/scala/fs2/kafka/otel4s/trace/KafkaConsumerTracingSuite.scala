@@ -31,34 +31,7 @@ import org.typelevel.otel4s.trace.Tracer
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
 import org.apache.kafka.common.TopicPartition
 
-@annotation.nowarn("cat=deprecation")
 final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
-
-  test("consumeChunk delegates to the underlying consumer without tracing") {
-    KafkaTracerTestkit
-      .create()
-      .use { testkit =>
-        for {
-          processed <- Ref[IO].of(Option.empty[Chunk[ConsumerRecord[String, String]]])
-          commits <- Ref[IO].of(0)
-          record = ConsumerRecord("topic", 0, 1L, "k", "v")
-          consumer = StubKafkaConsumer.streaming(
-            List(committableRecord(record, commits))
-          )
-          traced <- testkit.tracedConsumer[String, String](consumer)
-          _ <- traced.consumeChunk { chunk =>
-            processed.set(Some(chunk)).as(CommitNow)
-          }.attempt
-          seen <- processed.get
-          commitCount <- commits.get
-          spans <- testkit.finishedSpans
-        } yield {
-          assertEquals(seen, Some(Chunk.singleton(record)))
-          assertEquals(commitCount, 1)
-          assertEquals(spans, Nil)
-        }
-      }
-  }
 
   test("consume helpers commit as roots inside an ambient span") {
     KafkaTracerTestkit.create().use { testkit =>

@@ -40,53 +40,13 @@ trait TracedKafkaConsumer[F[_], K, V] {
   /** Configured process and receive operations bound to this consumer's cached metadata. */
   def spans: ConsumerSpans[F]
 
-  /** Delegates to `underlying.records`.
-    *
-    * Record emission itself is not treated as processing. Wrap the actual business logic with `spans.process` or use
-    * [[recordsTraced]] for the common `evalMap` shape.
-    */
-  @deprecated("Use underlying.records", "0.3")
-  final def records: Stream[F, CommittableConsumerRecord[F, K, V]] =
-    underlying.records
-
-  /** Delegates to `underlying.partitionedRecords`.
-    *
-    * This is a passthrough convenience so partition-oriented code can stay on the traced handle without reaching back
-    * to [[underlying]].
-    */
-  @deprecated("Use underlying.partitionedRecords", "0.3")
-  final def partitionedRecords: Stream[F, Stream[F, CommittableConsumerRecord[F, K, V]]] =
-    underlying.partitionedRecords
-
-  /** Delegates to `underlying.partitionedStream`.
-    *
-    * This is a passthrough convenience so partition-oriented code can stay on the traced handle without reaching back
-    * to [[underlying]].
-    */
-  @deprecated("Use underlying.partitionedStream", "0.3")
-  final def partitionedStream: Stream[F, Stream[F, CommittableConsumerRecord[F, K, V]]] =
-    underlying.partitionedStream
-
-  /** Delegates to `underlying.consumeChunk` without adding tracing.
-    *
-    * This passthrough keeps raw chunk-oriented `fs2-kafka` code available on the traced handle. Use
-    * [[consumeChunkTraced]] for one batch `process` span or [[consumeRecordTraced]] for per-record `process` spans,
-    * each with `receive` and owned `commit` tracing.
-    */
-  @deprecated("Use underlying.consumeChunk", "0.3")
-  final def consumeChunk(
-      chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
-  )(implicit F: Concurrent[F]): F[Nothing] = {
-    implicit val parallel: Parallel[F] = spawn.parallelForGenSpawn[F, Throwable]
-    underlying.consumeChunk(chunkProcessor)
-  }
-
   /** Consume from all assigned partitions concurrently, tracing each emitted chunk.
     *
-    * Each emitted committable chunk is wrapped in a chunk-level `receive` span via [[receiveCommittable]], then in one
-    * batch `process` span while the supplied `chunkProcessor` runs. The callback receives the plain [[ConsumerRecord]]
-    * values for that chunk and runs once. Offsets from the corresponding committable records are collected and
-    * committed after the callback effect completes successfully, outside the receive span and inside a `commit` span.
+    * Each emitted committable chunk is wrapped in a chunk-level `receive` span via
+    * [[ConsumerSpans.receiveCommittable]], then in one batch `process` span while the supplied `chunkProcessor` runs.
+    * The callback receives the plain [[ConsumerRecord]] values for that chunk and runs once. Offsets from the
+    * corresponding committable records are collected and committed after the callback effect completes successfully,
+    * outside the receive span and inside a `commit` span.
     *
     * Configure [[KafkaTracer.Config.withoutReceiveSpans]], [[KafkaTracer.Config.withoutProcessSpans]], or
     * [[KafkaTracer.Config.withoutCommitSpans]] to suppress individual spans without changing consumption or commit
@@ -184,62 +144,22 @@ trait TracedKafkaConsumer[F[_], K, V] {
     */
   def consumeRecordTraced[A](recordProcessor: ConsumerRecord[K, V] => F[A]): F[Nothing]
 
-  /** Evaluates `fa` inside a `poll` / `receive` span representing delivery of a non-committable chunk of records to
-    * application code.
-    */
-  @deprecated("Use spans.receive(records)(fa)", "0.3")
-  def receive[A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A]
-
-  /** Evaluates `fa` inside a `poll` / `receive` span representing delivery of a committable chunk of records to
-    * application code.
-    *
-    * This is a convenience overload of [[receive]] for `Chunk[CommittableConsumerRecord[...]]`. The commit handle is
-    * preserved, but span attributes are derived from the wrapped [[CommittableConsumerRecord.record]] values.
-    *
-    * Is shorthand for:
-    *
-    * {{{
-    * tracedConsumer.spans.receiveCommittable(records)(fa)
-    * }}}
-    */
-  @deprecated("Use spans.receiveCommittable(records)(fa)", "0.3")
-  def receiveCommittable[A](records: Chunk[CommittableConsumerRecord[F, K, V]])(fa: F[A]): F[A]
-
-  /** Evaluates `fa` inside a `process` span using trace context extracted from the record headers when available.
-    */
-  @deprecated("Use spans.process(record)(fa)", "0.3")
-  def process[A](record: ConsumerRecord[K, V])(fa: F[A]): F[A]
-
-  /** Evaluates `fa` inside a `process` span using trace context extracted from the record headers when available.
-    *
-    * This is a convenience overload of `process` for [[CommittableConsumerRecord]] that forwards to the plain
-    * [[ConsumerRecord]]-based variant using [[CommittableConsumerRecord.record]].
-    *
-    * Is shorthand for:
-    *
-    * {{{
-    * tracedConsumer.spans.process(committable)(fa)
-    * }}}
-    */
-  @deprecated("Use spans.process(record)(fa)", "0.3")
-  def process[A](record: CommittableConsumerRecord[F, K, V])(fa: F[A]): F[A]
-
   /** Convenience stream for the common traced-consumption shape: a chunk-level `receive` span around delivery, plus a
     * per-record `process` span for each record in that chunk.
     *
     * This is shorthand for consuming the underlying partitioned stream chunk-by-chunk, wrapping each chunk with
-    * [[receiveCommittable]], and then wrapping each record callback with `process`.
+    * [[ConsumerSpans.receiveCommittable]], and then wrapping each record callback with `process`.
     *
     * Is shorthand for:
     *
     * {{{
-    * tracedConsumer.partitionedStream
+    * tracedConsumer.underlying.partitionedStream
     *   .map(
     *     _.chunks.flatMap { chunk =>
     *       Stream
-    *         .eval(tracedConsumer.receiveCommittable(chunk)(Concurrent[F].pure(chunk)))
+    *         .eval(tracedConsumer.spans.receiveCommittable(chunk)(Concurrent[F].pure(chunk)))
     *         .flatMap(records =>
-    *           Stream.chunk(records).evalMap(record => tracedConsumer.process(record)(f(record)))
+    *           Stream.chunk(records).evalMap(record => tracedConsumer.spans.process(record)(f(record)))
     *         )
     *     }
     *   )
@@ -350,20 +270,6 @@ object TracedKafkaConsumer {
         .compile
         .onlyOrError
 
-    override def receive[A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A] =
-      spans.receive(records)(fa)
-
-    override def receiveCommittable[A](
-        records: Chunk[CommittableConsumerRecord[F, K, V]]
-    )(fa: F[A]): F[A] =
-      spans.receiveCommittable(records)(fa)
-
-    override def process[A](record: ConsumerRecord[K, V])(fa: F[A]): F[A] =
-      spans.process(record)(fa)
-
-    override def process[A](record: CommittableConsumerRecord[F, K, V])(fa: F[A]): F[A] =
-      spans.process(record)(fa)
-
     override def recordsTraced[A](
         f: CommittableConsumerRecord[F, K, V] => F[A]
     ): Stream[F, A] =
@@ -398,20 +304,6 @@ object TracedKafkaConsumer {
       underlying.partitionedStream
         .map(_.evalMap(f))
         .parJoinUnbounded
-
-    override def receive[A](records: Chunk[ConsumerRecord[K, V]])(fa: F[A]): F[A] =
-      fa
-
-    override def receiveCommittable[A](
-        records: Chunk[CommittableConsumerRecord[F, K, V]]
-    )(fa: F[A]): F[A] =
-      fa
-
-    override def process[A](record: ConsumerRecord[K, V])(fa: F[A]): F[A] =
-      fa
-
-    override def process[A](record: CommittableConsumerRecord[F, K, V])(fa: F[A]): F[A] =
-      fa
 
   }
 

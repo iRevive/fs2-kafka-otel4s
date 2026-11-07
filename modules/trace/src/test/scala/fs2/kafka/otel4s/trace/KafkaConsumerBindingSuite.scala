@@ -16,44 +16,14 @@
 
 package fs2.kafka.otel4s.trace
 
-import fs2.kafka.ConsumerRecord
-
-@annotation.nowarn("cat=deprecation")
 final class KafkaConsumerBindingSuite extends KafkaTracingTestSupport {
 
-  test("traced consumer records delegates to underlying.records") {
+  test("traced consumer exposes its underlying consumer") {
     KafkaTracerTestkit.create().use { testkit =>
-      val records = List(StubKafkaConsumer.committableRecord(ConsumerRecord("topic", 0, 1L, "k", "v")))
-      val consumer = StubKafkaConsumer.streaming(records)
-
-      for {
-        traced <- testkit.tracedConsumer[String, String](consumer)
-        got <- traced.records.compile.toList
-      } yield assertEquals(got.map(_.record), records.map(_.record))
-    }
-  }
-
-  test("traced consumer partitionedRecords delegates to underlying.partitionedRecords") {
-    KafkaTracerTestkit.create().use { testkit =>
-      val records = List(StubKafkaConsumer.committableRecord(ConsumerRecord("topic", 0, 1L, "k", "v")))
-      val consumer = StubKafkaConsumer.streaming(records)
-
-      for {
-        traced <- testkit.tracedConsumer[String, String](consumer)
-        got <- traced.partitionedRecords.evalMap(_.compile.toList).compile.toList
-      } yield assertEquals(got.map(_.map(_.record)), List(records.map(_.record)))
-    }
-  }
-
-  test("traced consumer partitionedStream delegates to underlying.partitionedStream") {
-    KafkaTracerTestkit.create().use { testkit =>
-      val records = List(StubKafkaConsumer.committableRecord(ConsumerRecord("topic", 0, 1L, "k", "v")))
-      val consumer = StubKafkaConsumer.streaming(records)
-
-      for {
-        traced <- testkit.tracedConsumer[String, String](consumer)
-        got <- traced.partitionedStream.evalMap(_.compile.toList).compile.toList
-      } yield assertEquals(got.map(_.map(_.record)), List(records.map(_.record)))
+      val consumer = StubKafkaConsumer.metadataOnly[String, String]()
+      testkit.tracedConsumer[String, String](consumer).map { traced =>
+        assert(traced.underlying eq consumer)
+      }
     }
   }
 

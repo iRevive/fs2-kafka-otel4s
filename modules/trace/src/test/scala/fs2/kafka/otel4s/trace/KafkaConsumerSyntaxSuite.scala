@@ -23,46 +23,7 @@ import fs2.kafka._
 import fs2.kafka.consumer.KafkaConsumeChunk.CommitNow
 import fs2.kafka.otel4s.trace.syntax._
 
-@annotation.nowarn("cat=deprecation")
 final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
-
-  test("Chunk[ConsumerRecord].receiveTraced delegates to receive") {
-    for {
-      probe <- ConsumerSyntaxProbe.create()
-      record = ConsumerRecord("topic", 0, 42L, "key", "value")
-      chunk = Chunk.singleton(record)
-      result <- chunk.receiveTraced(IO.pure("ok"))(probe)
-      seen <- probe.receivedChunk.get
-    } yield {
-      assertEquals(seen, Some(chunk))
-      assertEquals(result, "ok")
-    }
-  }
-
-  test("Chunk[CommittableConsumerRecord].receiveTraced delegates to receiveCommittable") {
-    for {
-      probe <- ConsumerSyntaxProbe.create()
-      record = StubKafkaConsumer.committableRecord(ConsumerRecord("topic", 0, 42L, "key", "value"))
-      chunk = Chunk.singleton(record)
-      result <- chunk.receiveTraced(IO.pure("ok"))(probe)
-      seen <- probe.receivedCommittableChunk.get
-    } yield {
-      assertEquals(seen, Some(chunk))
-      assertEquals(result, "ok")
-    }
-  }
-
-  test("ConsumerRecord.processTraced delegates to process") {
-    for {
-      probe <- ConsumerSyntaxProbe.create()
-      record = ConsumerRecord("topic", 0, 42L, "key", "value")
-      result <- record.processTraced(IO.pure("ok"))(probe)
-      seen <- probe.processedRecord.get
-    } yield {
-      assertEquals(seen, Some(record))
-      assertEquals(result, "ok")
-    }
-  }
 
   test("Stream[KafkaConsumer].traced binds tracing and yields traced consumers") {
     for {
@@ -123,21 +84,6 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
     } yield assertEquals(seen, true)
   }
 
-  test("Stream[TracedKafkaConsumer].consumeChunk delegates to traced consumeChunk") {
-    for {
-      processed <- Ref[IO].of(Option.empty[Chunk[ConsumerRecord[String, String]]])
-      record = ConsumerRecord("topic", 0, 1L, "k", "v")
-      probe <- ConsumerSyntaxProbe.create(
-        underlying = StubKafkaConsumer.streaming(List(StubKafkaConsumer.committableRecord(record)))
-      )
-      _ <- Stream
-        .emit(probe)
-        .consumeChunk(chunk => processed.set(Some(chunk)).as(CommitNow))
-        .attempt
-      seen <- processed.get
-    } yield assertEquals(seen, Some(Chunk.singleton(record)))
-  }
-
   test("Stream[TracedKafkaConsumer].consumeRecordTraced delegates to traced consumeRecordTraced") {
     for {
       probe <- ConsumerSyntaxProbe.create()
@@ -168,10 +114,6 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
 
   final class ConsumerSyntaxProbe(
       override val underlying: KafkaConsumer[IO, String, String],
-      val receivedChunk: Ref[IO, Option[Chunk[ConsumerRecord[String, String]]]],
-      val receivedCommittableChunk: Ref[IO, Option[Chunk[CommittableConsumerRecord[IO, String, String]]]],
-      val processedRecord: Ref[IO, Option[ConsumerRecord[String, String]]],
-      val processedCommittable: Ref[IO, Option[CommittableConsumerRecord[IO, String, String]]],
       val consumeChunkTracedChunkCalled: Ref[IO, Boolean],
       val consumeRecordTracedCalled: Ref[IO, Boolean],
       val recordsTracedCalled: Ref[IO, Boolean],
@@ -194,24 +136,6 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
     ): IO[Nothing] =
       consumeRecordTracedCalled.set(true) *> IO.raiseError(new RuntimeException("stop"))
 
-    override def receive[A](
-        records: Chunk[ConsumerRecord[String, String]]
-    )(fa: IO[A]): IO[A] =
-      receivedChunk.set(Some(records)) *> fa
-
-    override def receiveCommittable[A](
-        records: Chunk[CommittableConsumerRecord[IO, String, String]]
-    )(fa: IO[A]): IO[A] =
-      receivedCommittableChunk.set(Some(records)) *> fa
-
-    override def process[A](record: ConsumerRecord[String, String])(fa: IO[A]): IO[A] =
-      processedRecord.set(Some(record)) *> fa
-
-    override def process[A](
-        record: CommittableConsumerRecord[IO, String, String]
-    )(fa: IO[A]): IO[A] =
-      processedCommittable.set(Some(record)) *> fa
-
     override def recordsTraced[A](
         f: CommittableConsumerRecord[IO, String, String] => IO[A]
     ): Stream[IO, A] =
@@ -225,23 +149,11 @@ final class KafkaConsumerSyntaxSuite extends KafkaTracingTestSupport {
         recordsTracedResult: Stream[IO, CommittableConsumerRecord[IO, String, String]] = Stream.empty
     ): IO[ConsumerSyntaxProbe] =
       for {
-        consumeChunkTracedChunk <- Ref[IO].of(Option.empty[Chunk[ConsumerRecord[String, String]]])
-        receiveCommittableChunk <- Ref[IO].of(
-          Option.empty[Chunk[CommittableConsumerRecord[IO, String, String]]]
-        )
-        processedRecord <- Ref[IO].of(Option.empty[ConsumerRecord[String, String]])
-        processedCommittable <- Ref[IO].of(
-          Option.empty[CommittableConsumerRecord[IO, String, String]]
-        )
         consumeChunkTracedChunkCalled <- Ref[IO].of(false)
         consumeRecordTracedCalled <- Ref[IO].of(false)
         recordsTracedCalled <- Ref[IO].of(false)
       } yield new ConsumerSyntaxProbe(
         underlying,
-        consumeChunkTracedChunk,
-        receiveCommittableChunk,
-        processedRecord,
-        processedCommittable,
         consumeChunkTracedChunkCalled,
         consumeRecordTracedCalled,
         recordsTracedCalled,
