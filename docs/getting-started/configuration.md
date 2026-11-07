@@ -20,6 +20,7 @@ val processingOnlyConfig: KafkaTracer.Config =
 
 | Option | Use it to |
 | --- | --- |
+| `withServerAddress(bootstrapServers)` | Use the first Kafka bootstrap server for `server.address` and, when present, `server.port`; later entries are ignored |
 | `withServerAddress(host, port)` | Add explicit broker endpoint attributes; bootstrap servers are configured separately in Kafka settings |
 | `withBatchSpanMode(SharedSendSpan)` | Reduce producer batch span volume; the default is `PerRecordSpans` |
 | `withoutReceiveSpans`, `withoutProcessSpans`, `withoutCommitSpans` | Suppress consumer span types while retaining processing and commits |

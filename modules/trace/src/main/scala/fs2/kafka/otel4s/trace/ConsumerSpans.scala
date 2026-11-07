@@ -52,8 +52,10 @@ import scala.concurrent.duration.FiniteDuration
   *
   * Attributes are applied in order: derived semantic attributes, constant attributes configured with
   * [[KafkaTracer.Config.withConstAttributes]] or [[KafkaTracer.Config.addConstAttributes]], then setup attributes.
-  * Later values override earlier values with the same key. [[KafkaTracer.Config.withServerAddress]] contributes
-  * constant broker address attributes. Attribute overrides do not change the metadata passed to setup functions.
+  * Later values override earlier values with the same key.
+  * [[KafkaTracer.Config.withServerAddress(serverAddress:String,serverPort:Option[Int])*]] or
+  * [[KafkaTracer.Config.withServerAddress(bootstrapServers:String)*]] contributes constant broker address attributes.
+  * Attribute overrides do not change the metadata passed to setup functions.
   *
   * Setup functions do not change span kind or message links. Process spans are consumer roots linked to recognized
   * contexts from record headers by default. [[KafkaTracer.Config.SpanSetup.Process.relationship]] can make
