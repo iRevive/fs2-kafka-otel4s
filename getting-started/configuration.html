@@ -199,7 +199,7 @@
         multiple-record batches remain linked roots. Receive and commit behavior stays the same.</p>
         
         <h2 id="custom-message-keys" class="section"><a class="anchor-link left" href="#custom-message-keys"><i class="icofont-laika link">&#xef71;</i></a>Custom message keys</h2>
-        <p>Define <code>KafkaMessageKey</code> to include custom keys in <code>messaging.kafka.message.key</code>. Return <code>None</code> to omit a key.</p>
+        <p>Define <code>KafkaMessageKey</code> to include custom keys in <code>kafka.message.key</code>. Return <code>None</code> to omit a key.</p>
         <p>When changing key types, use <code>tracedWithSerializers</code> to keep key attributes. Plain <code>withSerializers</code> keeps spans
         but stops deriving key attributes for the new type.</p>
         <pre><code class="nohighlight"><span class="keyword">import</span><span> </span><span class="identifier">cats</span><span>.</span><span class="identifier">effect</span><span>.</span><span class="type-name">IO</span><span>

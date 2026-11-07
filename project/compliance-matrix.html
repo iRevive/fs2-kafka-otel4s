@@ -191,11 +191,11 @@
             </tr>
             <tr>
               <td>Single-message send attributes</td>
-              <td><code>messaging.system</code>, operation attrs, destination name, and canonical key are required/recommended on applicable spans</td>
+              <td><code>messaging.system.name</code>, operation attrs, destination name, and canonical key are required/recommended on applicable spans</td>
               <td>Producer attributes getter exposes system, destination, client id</td>
               <td>Emitted for single-message sends</td>
               <td>Match</td>
-              <td><code>messaging.kafka.message.key</code> is only emitted when the key has a canonical string form.</td>
+              <td><code>kafka.message.key</code> is only emitted when the key has a canonical string form.</td>
             </tr>
             <tr>
               <td>Batch message count</td>

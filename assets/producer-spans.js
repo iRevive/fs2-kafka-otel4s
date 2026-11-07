@@ -56,15 +56,15 @@
     const attr = (key, value, type = "string", source = "Record / client metadata") => ({ key, value: String(value), type, source });
     const recordAttributes = record => [attr("messaging.destination.name", state.topic),
       ...(state.partition ? [attr("messaging.destination.partition.id", "0")] : []),
-      attr("messaging.kafka.message.key", record.id),
-      ...(state.tombstone ? [attr("messaging.kafka.message.tombstone", true, "boolean")] : [])];
+      attr("kafka.message.key", record.id),
+      ...(state.tombstone ? [attr("kafka.message.tombstone", true, "boolean")] : [])];
     function add(id, operation, kind, start, length, record, links) {
       const derived = Object.create(null);
-      [attr("messaging.system", "kafka"), attr("messaging.operation.name", operation), attr("messaging.operation.type", operation),
+      [attr("messaging.system.name", "kafka"), attr("messaging.operation.name", operation), attr("messaging.operation.type", operation),
         attr("messaging.destination.name", state.topic), ...(state.clientId ? [attr("messaging.client.id", state.clientId)] : []),
         ...(state.partition ? [attr("messaging.destination.partition.id", "0")] : []),
-        ...(record ? [attr("messaging.kafka.message.key", record.id)] : []),
-        ...(state.tombstone ? [attr("messaging.kafka.message.tombstone", true, "boolean")] : []),
+        ...(record ? [attr("kafka.message.key", record.id)] : []),
+        ...(state.tombstone ? [attr("kafka.message.tombstone", true, "boolean")] : []),
         ...(operation === "send" && count > 1 ? [attr("messaging.batch.message_count", count, "long")] : []),
       ].forEach(a => derived[a.key] = a);
       const overridden = [];
@@ -72,7 +72,7 @@
       // Result attributes are added after constant attributes by ProducerSpans.
       if (operation === "send" && count === 1) {
         [attr("messaging.destination.partition.id", "0", "string", "Kafka acknowledgment (illustrative)"),
-          attr("messaging.kafka.offset", 42, "long", "Kafka acknowledgment (illustrative)")].forEach(a => derived[a.key] = a);
+          attr("kafka.offset", 42, "long", "Kafka acknowledgment (illustrative)")].forEach(a => derived[a.key] = a);
       }
       spans.push({ id, name: `${operation} ${state.topic}`, record: record ? record.id : null,
         kind, scope: "fs2.kafka", parent: state.ambient ? "app" : null, start, length, links,

@@ -339,8 +339,8 @@
         <ul>
           <li><code>messaging.destination.name</code>;</li>
           <li><code>messaging.destination.partition.id</code>, when the partition was explicitly set on the producer record;</li>
-          <li><code>messaging.kafka.message.key</code>, when the key can be represented by its <code>KafkaMessageKey</code> instance;</li>
-          <li><code>messaging.kafka.message.tombstone = true</code>, when the record value is null.</li>
+          <li><code>kafka.message.key</code>, when the key can be represented by its <code>KafkaMessageKey</code> instance;</li>
+          <li><code>kafka.message.tombstone = true</code>, when the record value is null.</li>
         </ul>
         <p>Links do not contain the producer client ID, messaging operation attributes, Kafka offset, or configured constant attributes.</p>
         <p>In <code>SharedSendSpan</code>, records given the send context have no send links. Their individual attributes
@@ -349,20 +349,20 @@
         <h2 id="send-span-attributes" class="section"><a class="anchor-link left" href="#send-span-attributes"><i class="icofont-laika link">&#xef71;</i></a>Send-span attributes</h2>
         <p>Every send span initially contains:</p>
         <ul>
-          <li><code>messaging.system = &quot;kafka&quot;</code>;</li>
+          <li><code>messaging.system.name = &quot;kafka&quot;</code>;</li>
           <li><code>messaging.operation.name = &quot;send&quot;</code>;</li>
           <li><code>messaging.operation.type = &quot;send&quot;</code>;</li>
           <li><code>messaging.client.id</code>, when configured on the producer;</li>
           <li><code>messaging.destination.name</code>, only when all records target one topic;</li>
           <li><code>messaging.destination.partition.id</code>, only when every record has an explicit partition and all records target the same topic-partition;</li>
           <li><code>messaging.batch.message_count</code>, only when the operation contains more than one record;</li>
-          <li><code>messaging.kafka.message.key</code>, only for a single record with a representable key;</li>
-          <li><code>messaging.kafka.message.tombstone = true</code>, when a single record is a tombstone or every record in a batch is a tombstone.</li>
+          <li><code>kafka.message.key</code>, only for a single record with a representable key;</li>
+          <li><code>kafka.message.tombstone = true</code>, when a single record is a tombstone or every record in a batch is a tombstone.</li>
         </ul>
         <p>After a successful single-record send completes, its Kafka result contributes:</p>
         <ul>
           <li>the actual <code>messaging.destination.partition.id</code>;</li>
-          <li><code>messaging.kafka.offset</code>.</li>
+          <li><code>kafka.offset</code>.</li>
         </ul>
         <p>Batch results do not add result-level partition or offset attributes.</p>
         <p><code>withSendSpanSetup</code> attributes override constant attributes, which override derived attributes.
@@ -371,14 +371,14 @@
         <h2 id="create-span-attributes" class="section"><a class="anchor-link left" href="#create-span-attributes"><i class="icofont-laika link">&#xef71;</i></a>Create-span attributes</h2>
         <p>Every generated create span contains:</p>
         <ul>
-          <li><code>messaging.system = &quot;kafka&quot;</code>;</li>
+          <li><code>messaging.system.name = &quot;kafka&quot;</code>;</li>
           <li><code>messaging.operation.name = &quot;create&quot;</code>;</li>
           <li><code>messaging.operation.type = &quot;create&quot;</code>;</li>
           <li><code>messaging.destination.name</code>;</li>
           <li><code>messaging.client.id</code>, when configured on the producer;</li>
           <li><code>messaging.destination.partition.id</code>, when explicitly set on the producer record;</li>
-          <li><code>messaging.kafka.message.key</code>, when representable;</li>
-          <li><code>messaging.kafka.message.tombstone = true</code>, when the value is null;</li>
+          <li><code>kafka.message.key</code>, when representable;</li>
+          <li><code>kafka.message.tombstone = true</code>, when the value is null;</li>
           <li>configured constant attributes.</li>
         </ul>
         <p>Create-span naming and setup are fixed. <code>withSendSpanSetup</code> only affects send spans.</p>
