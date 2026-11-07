@@ -162,8 +162,8 @@ Every link from a send span describes one produced record and may contain:
 
 - `messaging.destination.name`;
 - `messaging.destination.partition.id`, when the partition was explicitly set on the producer record;
-- `messaging.kafka.message.key`, when the key can be represented by its `KafkaMessageKey` instance;
-- `messaging.kafka.message.tombstone = true`, when the record value is null.
+- `kafka.message.key`, when the key can be represented by its `KafkaMessageKey` instance;
+- `kafka.message.tombstone = true`, when the record value is null.
 
 Links do not contain the producer client ID, messaging operation attributes, Kafka offset, or configured constant attributes.
 
@@ -174,20 +174,20 @@ are omitted from the batch span.
 
 Every send span initially contains:
 
-- `messaging.system = "kafka"`;
+- `messaging.system.name = "kafka"`;
 - `messaging.operation.name = "send"`;
 - `messaging.operation.type = "send"`;
 - `messaging.client.id`, when configured on the producer;
 - `messaging.destination.name`, only when all records target one topic;
 - `messaging.destination.partition.id`, only when every record has an explicit partition and all records target the same topic-partition;
 - `messaging.batch.message_count`, only when the operation contains more than one record;
-- `messaging.kafka.message.key`, only for a single record with a representable key;
-- `messaging.kafka.message.tombstone = true`, when a single record is a tombstone or every record in a batch is a tombstone.
+- `kafka.message.key`, only for a single record with a representable key;
+- `kafka.message.tombstone = true`, when a single record is a tombstone or every record in a batch is a tombstone.
 
 After a successful single-record send completes, its Kafka result contributes:
 
 - the actual `messaging.destination.partition.id`;
-- `messaging.kafka.offset`.
+- `kafka.offset`.
 
 Batch results do not add result-level partition or offset attributes.
 
@@ -198,14 +198,14 @@ After acknowledgment, single-record result attributes replace matching partition
 
 Every generated create span contains:
 
-- `messaging.system = "kafka"`;
+- `messaging.system.name = "kafka"`;
 - `messaging.operation.name = "create"`;
 - `messaging.operation.type = "create"`;
 - `messaging.destination.name`;
 - `messaging.client.id`, when configured on the producer;
 - `messaging.destination.partition.id`, when explicitly set on the producer record;
-- `messaging.kafka.message.key`, when representable;
-- `messaging.kafka.message.tombstone = true`, when the value is null;
+- `kafka.message.key`, when representable;
+- `kafka.message.tombstone = true`, when the value is null;
 - configured constant attributes.
 
 Create-span naming and setup are fixed. `withSendSpanSetup` only affects send spans.

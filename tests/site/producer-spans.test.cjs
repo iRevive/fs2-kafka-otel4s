@@ -70,26 +70,26 @@ test("batch attributes, link attributes, and final single-record results remain 
   const batch = describe({ incoming: "some", partition: true, tombstone: true });
   const send = batch.spans.find(s => s.id === "send");
   assert.equal(attribute(send, "messaging.batch.message_count").value, "3");
-  assert.equal(attribute(send, "messaging.kafka.message.key"), undefined);
-  assert.equal(attribute(send, "messaging.kafka.offset"), undefined);
-  assert.equal(attribute(send, "messaging.kafka.message.tombstone").value, "true");
-  assert.equal(send.links[0].attributes.find(a => a.key === "messaging.kafka.message.key").value, "m1");
+  assert.equal(attribute(send, "kafka.message.key"), undefined);
+  assert.equal(attribute(send, "kafka.offset"), undefined);
+  assert.equal(attribute(send, "kafka.message.tombstone").value, "true");
+  assert.equal(send.links[0].attributes.find(a => a.key === "kafka.message.key").value, "m1");
   for (const link of send.links) {
-    assert(!link.attributes.some(a => ["messaging.client.id", "messaging.kafka.offset", "messaging.batch.message_count"].includes(a.key)));
+    assert(!link.attributes.some(a => ["messaging.client.id", "kafka.offset", "messaging.batch.message_count"].includes(a.key)));
   }
   const unpartitioned = describe({}).spans.find(s => s.id === "send");
   assert.equal(attribute(unpartitioned, "messaging.destination.partition.id"), undefined);
   const single = describe({ count: "1" }).spans.find(s => s.id === "send");
   assert.equal(attribute(single, "messaging.batch.message_count"), undefined);
   assert.equal(attribute(single, "messaging.destination.partition.id").value, "0");
-  assert.equal(attribute(single, "messaging.kafka.offset").value, "42");
-  assert.match(attribute(single, "messaging.kafka.offset").source, /acknowledgment/);
+  assert.equal(attribute(single, "kafka.offset").value, "42");
+  assert.match(attribute(single, "kafka.offset").source, /acknowledgment/);
 });
 
 test("constants apply to library spans; acknowledgment attributes take final precedence", () => {
   const attributes = [
     { key: "messaging.destination.name", type: "string", value: "override" },
-    { key: "messaging.kafka.offset", type: "long", value: "99" },
+    { key: "kafka.offset", type: "long", value: "99" },
     { key: "messaging.destination.partition.id", type: "string", value: "8" },
     { key: "__proto__", type: "boolean", value: "true" },
   ];
@@ -102,7 +102,7 @@ test("constants apply to library spans; acknowledgment attributes take final pre
     assert(span.links.every(l => l.attributes.find(a => a.key === "messaging.destination.name").value === "orders"));
   }
   const single = describe({ count: "1", attributes }).spans.find(s => s.id === "send");
-  assert.equal(attribute(single, "messaging.kafka.offset").value, "42");
+  assert.equal(attribute(single, "kafka.offset").value, "42");
   assert.equal(attribute(single, "messaging.destination.partition.id").value, "0");
 });
 

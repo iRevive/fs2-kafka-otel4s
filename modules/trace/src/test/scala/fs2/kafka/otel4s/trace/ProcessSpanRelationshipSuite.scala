@@ -30,7 +30,10 @@ import org.typelevel.otel4s.oteljava.testkit.trace.{
   TraceExpectation,
   TraceForestExpectation
 }
-import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
+import org.typelevel.otel4s.semconv.experimental.attributes.{
+  KafkaExperimentalAttributes,
+  MessagingExperimentalAttributes
+}
 import org.typelevel.otel4s.trace.{SpanContext, TracerProvider}
 
 final class ProcessSpanRelationshipSuite extends KafkaTracingTestSupport {
@@ -49,8 +52,8 @@ final class ProcessSpanRelationshipSuite extends KafkaTracingTestSupport {
     .attributesSubset(
       MessagingExperimentalAttributes.MessagingDestinationName(topic),
       MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
-      MessagingExperimentalAttributes.MessagingKafkaMessageKey("key"),
-      MessagingExperimentalAttributes.MessagingKafkaOffset(1L)
+      KafkaExperimentalAttributes.KafkaMessageKey("key"),
+      KafkaExperimentalAttributes.KafkaOffset(1L)
     )
 
   private val record = ConsumerRecord("orders", 0, 1L, "key", "value")

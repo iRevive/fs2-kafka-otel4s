@@ -29,7 +29,10 @@ import org.typelevel.otel4s.oteljava.testkit.trace.{
   TraceForestExpectation
 }
 import org.typelevel.otel4s.semconv.attributes.ErrorAttributes
-import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
+import org.typelevel.otel4s.semconv.experimental.attributes.{
+  KafkaExperimentalAttributes,
+  MessagingExperimentalAttributes
+}
 import org.typelevel.otel4s.trace.TracerProvider
 
 final class ProducerSpansSuite extends KafkaTracingTestSupport {
@@ -150,7 +153,7 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
         val expected = root(
           sendSpan.attributesSubset(
             MessagingExperimentalAttributes.MessagingClientId("explicit-client"),
-            MessagingExperimentalAttributes.MessagingKafkaOffset(42L)
+            KafkaExperimentalAttributes.KafkaOffset(42L)
           )
         )
         assertExpected(finished, TraceForestExpectation.unordered(expected, expected))
@@ -190,9 +193,9 @@ final class ProducerSpansSuite extends KafkaTracingTestSupport {
                         Option.when(count == 1 && partition >= 0)(
                           MessagingExperimentalAttributes.MessagingDestinationPartitionId(partition.toString)
                         ) &&
-                        attributes.get(MessagingExperimentalAttributes.MessagingKafkaOffset) ==
+                        attributes.get(KafkaExperimentalAttributes.KafkaOffset) ==
                         Option.when(count == 1 && offset >= 0)(
-                          MessagingExperimentalAttributes.MessagingKafkaOffset(offset)
+                          KafkaExperimentalAttributes.KafkaOffset(offset)
                         )
                   }
                 )

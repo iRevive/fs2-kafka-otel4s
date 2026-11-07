@@ -21,7 +21,7 @@ import java.util.UUID
 /** Typeclass describing how to derive a canonical Kafka message-key string for semantic conventions.
   *
   * Implementations should return `Some(...)` only when the key has an unambiguous canonical string representation
-  * suitable for `messaging.kafka.message.key`. Returning `None` omits the attribute.
+  * suitable for `kafka.message.key`. Returning `None` omits the attribute.
   */
 trait KafkaMessageKey[-K] {
 

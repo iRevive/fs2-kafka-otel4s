@@ -47,7 +47,7 @@ test("default incoming contexts are links on the right operations, never parents
 test("stream commits use offset-only attributes and the selected commit pipe", () => {
   const traced = describe({ method: "stream" });
   const commit = traced.spans.find(s => s.id === "commit");
-  for (const key of ["messaging.batch.message_count", "messaging.kafka.offset", "messaging.kafka.message.key", "messaging.kafka.message.tombstone"]) {
+  for (const key of ["messaging.batch.message_count", "kafka.offset", "kafka.message.key", "kafka.message.tombstone"]) {
     assert.equal(attribute(commit, key), undefined);
   }
   assert.equal(attribute(commit, "messaging.destination.partition.id").value, "0");
@@ -159,10 +159,10 @@ test("singleton batch attributes follow the operation's record-count rules", () 
   const view = describe({ method: "chunk", count: "1", relationship: "ParentFromRecord" });
   const batch = view.spans.find(s => s.id === "batch");
   assert.equal(attribute(batch, "messaging.batch.message_count").value, "1");
-  assert.equal(attribute(batch, "messaging.kafka.message.key").value, "m1");
+  assert.equal(attribute(batch, "kafka.message.key").value, "m1");
   for (const id of ["receive", "commit"]) {
     const span = view.spans.find(s => s.id === id);
     assert.equal(attribute(span, "messaging.batch.message_count"), undefined);
-    assert.equal(attribute(span, "messaging.kafka.offset").value, "1");
+    assert.equal(attribute(span, "kafka.offset").value, "1");
   }
 });

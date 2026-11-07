@@ -24,7 +24,10 @@ import org.apache.kafka.clients.consumer.OffsetAndMetadata
 import org.apache.kafka.common.TopicPartition
 import org.typelevel.otel4s.oteljava.testkit.AttributesExpectation
 import org.typelevel.otel4s.oteljava.testkit.trace.{SpanExpectation, TraceForestExpectation}
-import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
+import org.typelevel.otel4s.semconv.experimental.attributes.{
+  KafkaExperimentalAttributes,
+  MessagingExperimentalAttributes
+}
 import org.typelevel.otel4s.Attributes
 import org.typelevel.otel4s.oteljava.testkit.trace.{
   LinkExpectation,
@@ -276,7 +279,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
                         .matches(attributes) &&
                       attributes.get(MessagingExperimentalAttributes.MessagingDestinationName).isEmpty &&
                       attributes.get(MessagingExperimentalAttributes.MessagingDestinationPartitionId).isEmpty &&
-                      attributes.get(MessagingExperimentalAttributes.MessagingKafkaOffset).isEmpty
+                      attributes.get(KafkaExperimentalAttributes.KafkaOffset).isEmpty
                     }
                   )
                   .links(
@@ -335,7 +338,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
                 .scopeName("fs2.kafka")
                 .attributesSubset(
                   MessagingExperimentalAttributes.MessagingBatchMessageCount(1L),
-                  MessagingExperimentalAttributes.MessagingKafkaOffset(21L),
+                  KafkaExperimentalAttributes.KafkaOffset(21L),
                   MessagingExperimentalAttributes.MessagingOperationName("setup")
                 )
             )
@@ -545,8 +548,8 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
                 .attributes(
                   AttributesExpectation.exact(
                     Attributes(
-                      MessagingExperimentalAttributes.MessagingSystem(
-                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      MessagingExperimentalAttributes.MessagingSystemName(
+                        MessagingExperimentalAttributes.MessagingSystemNameValue.Kafka
                       ),
                       MessagingExperimentalAttributes.MessagingOperationName("setup"),
                       MessagingExperimentalAttributes.MessagingOperationType("settle"),
@@ -582,8 +585,8 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
                 .attributes(
                   AttributesExpectation.exact(
                     Attributes(
-                      MessagingExperimentalAttributes.MessagingSystem(
-                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      MessagingExperimentalAttributes.MessagingSystemName(
+                        MessagingExperimentalAttributes.MessagingSystemNameValue.Kafka
                       ),
                       MessagingExperimentalAttributes.MessagingOperationName("commit"),
                       MessagingExperimentalAttributes.MessagingOperationType("settle"),
@@ -690,8 +693,8 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
             .attributes(
               AttributesExpectation.exact(
                 Attributes(
-                  MessagingExperimentalAttributes.MessagingSystem(
-                    MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                  MessagingExperimentalAttributes.MessagingSystemName(
+                    MessagingExperimentalAttributes.MessagingSystemNameValue.Kafka
                   ),
                   MessagingExperimentalAttributes.MessagingOperationName("commit"),
                   MessagingExperimentalAttributes.MessagingOperationType("settle"),
