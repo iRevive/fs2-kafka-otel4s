@@ -133,6 +133,10 @@
           </thead>
           <tbody>
             <tr>
+              <td><code>withServerAddress(bootstrapServers)</code></td>
+              <td>Use the first Kafka bootstrap server for <code>server.address</code> and, when present, <code>server.port</code>; later entries are ignored</td>
+            </tr>
+            <tr>
               <td><code>withServerAddress(host, port)</code></td>
               <td>Add explicit broker endpoint attributes; bootstrap servers are configured separately in Kafka settings</td>
             </tr>
