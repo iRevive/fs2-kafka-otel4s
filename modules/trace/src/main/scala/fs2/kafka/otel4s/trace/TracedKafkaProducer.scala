@@ -17,7 +17,8 @@
 package fs2.kafka.otel4s.trace
 
 import cats.{Applicative, Parallel}
-import cats.effect.{MonadCancelThrow, Resource}
+import cats.effect.{Concurrent, Resource}
+import cats.effect.kernel.instances.spawn
 import cats.syntax.all._
 import fs2.Chunk
 import fs2.kafka._
@@ -141,10 +142,12 @@ object TracedKafkaProducer {
   ): TracedKafkaProducer[F, K, V] =
     new Noop[F, K, V](underlying)
 
-  final private[otel4s] class Impl[F[_]: MonadCancelThrow: Parallel: Tracer, K: KafkaMessageKey, V](
+  final private[otel4s] class Impl[F[_]: Concurrent: Tracer, K: KafkaMessageKey, V](
       underlying: KafkaProducer.WithSettings[F, K, V],
       config: KafkaTracer.Config,
   ) extends TracedKafkaProducer[F, K, V] {
+
+    private implicit val parallel: Parallel[F] = spawn.parallelForGenSpawn[F, Throwable]
 
     override val spans: ProducerSpans.Impl[F] =
       ProducerSpans[F](ProducerMetadata.Provider.fromProducer(underlying), config)

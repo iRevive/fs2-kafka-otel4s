@@ -1,6 +1,6 @@
 import laika.helium.config.TextLink
 
-ThisBuild / tlBaseVersion := "0.3"
+ThisBuild / tlBaseVersion := "0.4"
 
 ThisBuild / organization := "io.github.irevive"
 ThisBuild / licenses := Seq(License.Apache2)
