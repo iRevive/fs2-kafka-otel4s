@@ -19,6 +19,7 @@ package fs2.kafka.otel4s.trace
 import cats.Parallel
 import cats.effect.Concurrent
 import cats.effect.Temporal
+import cats.effect.kernel.instances.spawn
 import cats.syntax.all._
 import fs2.{Chunk, Pipe}
 import fs2.kafka.{CommittableConsumerRecord, CommittableOffset, CommittableOffsetBatch, ConsumerRecord}
@@ -212,8 +213,7 @@ object ConsumerSpans {
   implicit final class ConsumerSpansSyntax[F[_]](private val spans: ConsumerSpans[F]) extends AnyVal {
 
     def commitBatchWithin(n: Int, d: FiniteDuration)(implicit
-        F: Temporal[F],
-        P: Parallel[F]
+        F: Temporal[F]
     ): Pipe[F, CommittableOffset[F], Unit] =
       commitBatches(spans, n, d)
 
@@ -374,16 +374,19 @@ object ConsumerSpans {
 
   }
 
-  private def commitBatches[F[_]: Temporal: Parallel](
+  private def commitBatches[F[_]: Temporal](
       spans: ConsumerSpans[F],
       n: Int,
       d: FiniteDuration
-  ): Pipe[F, CommittableOffset[F], Unit] =
+  ): Pipe[F, CommittableOffset[F], Unit] = {
+    implicit val parallel: Parallel[F] = spawn.parallelForGenSpawn[F, Throwable]
+
     _.groupWithin(n, d).evalMap { chunk =>
       val batch = CommittableOffsetBatch.fromFoldable(chunk)
       batch.offsets.toList.parTraverse_ { case (committer, offsets) =>
         spans.commitOffsets(offsets)(committer.commit(offsets))
       }
     }
+  }
 
 }

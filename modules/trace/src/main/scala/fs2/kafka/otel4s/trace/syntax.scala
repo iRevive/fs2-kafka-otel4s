@@ -16,7 +16,6 @@
 
 package fs2.kafka.otel4s.trace
 
-import cats.Parallel
 import cats.effect.Concurrent
 import cats.syntax.functor._
 import fs2.{Chunk, Stream}
@@ -157,7 +156,6 @@ trait KafkaConsumerStreamTracingSyntax {
     )(implicit
         ev: KafkaMessageKey[K],
         F: Concurrent[F],
-        P: Parallel[F],
         TP: TracerProvider[F]
     ): Stream[F, TracedKafkaConsumer[F, K, V]] =
       Stream
@@ -191,7 +189,7 @@ trait TracedKafkaConsumerStreamTracingSyntax {
     @deprecated("Use tracedConsumer.underlying.consumeChunk", "0.3")
     def consumeChunk(
         chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
-    )(implicit F: Concurrent[F], P: Parallel[F]): F[Nothing] =
+    )(implicit F: Concurrent[F]): F[Nothing] =
       self.evalMap(_.consumeChunk(chunkProcessor)).compile.onlyOrError
 
     /** Consumes from all assigned partitions concurrently, tracing each emitted chunk with `receive`, one batch
@@ -353,7 +351,6 @@ trait KafkaProducerStreamTracingSyntax {
     )(implicit
         ev: KafkaMessageKey[K],
         F: Concurrent[F],
-        P: Parallel[F],
         TP: TracerProvider[F]
     ): Stream[F, TracedKafkaProducer[F, K, V]] =
       Stream
@@ -398,7 +395,6 @@ trait KafkaProducerTracingSyntax {
     )(implicit
         ev: KafkaMessageKey[K],
         F: Concurrent[F],
-        P: Parallel[F],
         TP: TracerProvider[F]
     ): F[TracedKafkaProducer[F, K, V]] =
       KafkaTracer

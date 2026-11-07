@@ -18,6 +18,7 @@ package fs2.kafka.otel4s.trace
 
 import cats.Parallel
 import cats.effect.Concurrent
+import cats.effect.kernel.instances.spawn
 import cats.syntax.all._
 import fs2.{Chunk, Stream}
 import fs2.kafka.consumer.KafkaConsumeChunk.CommitNow
@@ -75,8 +76,10 @@ trait TracedKafkaConsumer[F[_], K, V] {
   @deprecated("Use underlying.consumeChunk", "0.3")
   final def consumeChunk(
       chunkProcessor: Chunk[ConsumerRecord[K, V]] => F[CommitNow]
-  )(implicit F: Concurrent[F], P: Parallel[F]): F[Nothing] =
+  )(implicit F: Concurrent[F]): F[Nothing] = {
+    implicit val parallel: Parallel[F] = spawn.parallelForGenSpawn[F, Throwable]
     underlying.consumeChunk(chunkProcessor)
+  }
 
   /** Consume from all assigned partitions concurrently, tracing each emitted chunk.
     *
@@ -289,15 +292,17 @@ object TracedKafkaConsumer {
     *
     * Consumer operations are delegated without emitting spans or extracting trace context.
     */
-  def noop[F[_]: Concurrent: Parallel, K, V](
+  def noop[F[_]: Concurrent, K, V](
       underlying: KafkaConsumer[F, K, V]
   ): TracedKafkaConsumer[F, K, V] =
     new Noop[F, K, V](underlying)
 
-  final private[otel4s] class Impl[F[_]: Concurrent: Parallel: Tracer, K: KafkaMessageKey, V](
+  final private[otel4s] class Impl[F[_]: Concurrent: Tracer, K: KafkaMessageKey, V](
       override val underlying: KafkaConsumer[F, K, V],
       config: KafkaTracer.Config
   ) extends TracedKafkaConsumer[F, K, V] {
+
+    private implicit val parallel: Parallel[F] = spawn.parallelForGenSpawn[F, Throwable]
 
     private val spanCore =
       ConsumerSpans[F](ConsumerMetadata.Provider.fromConsumer(underlying), config)
@@ -375,9 +380,11 @@ object TracedKafkaConsumer {
 
   }
 
-  final private class Noop[F[_]: Concurrent: Parallel, K, V](
+  final private class Noop[F[_]: Concurrent, K, V](
       override val underlying: KafkaConsumer[F, K, V]
   ) extends TracedKafkaConsumer[F, K, V] {
+
+    private implicit val parallel: Parallel[F] = spawn.parallelForGenSpawn[F, Throwable]
 
     override val spans: ConsumerSpans[F] = ConsumerSpans.noop[F]
 

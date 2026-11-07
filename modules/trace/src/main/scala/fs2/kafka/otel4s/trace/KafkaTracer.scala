@@ -16,7 +16,6 @@
 
 package fs2.kafka.otel4s.trace
 
-import cats.Parallel
 import cats.effect.{Concurrent, Resource}
 import cats.syntax.functor._
 import cats.syntax.semigroup._
@@ -411,7 +410,7 @@ object KafkaTracer {
     * The returned tracer preserves the traced producer and consumer APIs, but does not emit spans or propagate trace
     * context.
     */
-  def noop[F[_]: Concurrent: Parallel]: KafkaTracer[F] =
+  def noop[F[_]: Concurrent]: KafkaTracer[F] =
     new Noop[F]
 
   /** Creates a library-managed [[KafkaTracer]] from the implicit otel4s [[org.typelevel.otel4s.trace.TracerProvider]].
@@ -421,7 +420,7 @@ object KafkaTracer {
     * endpoint attributes such as `server.address` and `server.port`, provide them explicitly through
     * [[KafkaTracer.Config.withServerAddress]].
     */
-  def create[F[_]: Concurrent: Parallel: TracerProvider](
+  def create[F[_]: Concurrent: TracerProvider](
       config: Config
   ): F[KafkaTracer[F]] =
     TracerProvider[F]
@@ -439,12 +438,12 @@ object KafkaTracer {
     * endpoint attributes such as `server.address` and `server.port`, provide them explicitly through
     * [[KafkaTracer.Config.withServerAddress]].
     */
-  def resource[F[_]: Concurrent: Parallel: TracerProvider](
+  def resource[F[_]: Concurrent: TracerProvider](
       config: Config
   ): Resource[F, KafkaTracer[F]] =
     Resource.eval(create(config))
 
-  final private class Impl[F[_]: Concurrent: Parallel: Tracer](config: Config) extends KafkaTracer[F] {
+  final private class Impl[F[_]: Concurrent: Tracer](config: Config) extends KafkaTracer[F] {
 
     override def producer[K: KafkaMessageKey, V](
         producer: KafkaProducer.WithSettings[F, K, V]
@@ -470,7 +469,7 @@ object KafkaTracer {
 
   }
 
-  final private class Noop[F[_]: Concurrent: Parallel] extends KafkaTracer[F] {
+  final private class Noop[F[_]: Concurrent] extends KafkaTracer[F] {
 
     override def producer[K: KafkaMessageKey, V](
         producer: KafkaProducer.WithSettings[F, K, V]

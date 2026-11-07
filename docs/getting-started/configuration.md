@@ -121,4 +121,4 @@ Reuse traced handles for as long as their Kafka clients exist.
 For commits, use metadata from the consumer that produced the offsets. Use `ConsumerMetadata(None, None)`
 when its identity is unavailable.
 
-The commit batching method requires `Temporal` for timed flushes and `Parallel` for separate committers.
+The commit batching method requires `Temporal` for timed flushes and derives `Parallel` internally for separate committers.

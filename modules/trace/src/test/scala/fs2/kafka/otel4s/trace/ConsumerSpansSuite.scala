@@ -17,7 +17,6 @@
 package fs2.kafka.otel4s.trace
 
 import cats.effect.{Deferred, IO, Ref}
-import cats.Parallel
 import cats.effect.Temporal
 import fs2.{Chunk, Pipe, Stream}
 import fs2.kafka._
@@ -908,7 +907,7 @@ final class ConsumerSpansSuite extends KafkaTracingTestSupport {
       committer
     )
 
-  private def batchPipe[F[_]: Temporal: Parallel](spans: ConsumerSpans[F], n: Int, d: FiniteDuration): Pipe[
+  private def batchPipe[F[_]: Temporal](spans: ConsumerSpans[F], n: Int, d: FiniteDuration): Pipe[
     F,
     CommittableOffset[F],
     Unit
