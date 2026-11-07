@@ -104,8 +104,8 @@ final class KafkaTransactionalTracingSuite extends KafkaTracingTestSupport {
                     .producer("send topic")
                     .scopeName("fs2.kafka")
                     .attributesSubset(
-                      MessagingExperimentalAttributes.MessagingSystem(
-                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      MessagingExperimentalAttributes.MessagingSystemName(
+                        MessagingExperimentalAttributes.MessagingSystemNameValue.Kafka
                       ),
                       MessagingExperimentalAttributes.MessagingDestinationName("topic"),
                       MessagingExperimentalAttributes.MessagingOperationName("send"),
@@ -160,8 +160,8 @@ final class KafkaTransactionalTracingSuite extends KafkaTracingTestSupport {
                     .producer("send topic")
                     .scopeName("fs2.kafka")
                     .attributesSubset(
-                      MessagingExperimentalAttributes.MessagingSystem(
-                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      MessagingExperimentalAttributes.MessagingSystemName(
+                        MessagingExperimentalAttributes.MessagingSystemNameValue.Kafka
                       ),
                       MessagingExperimentalAttributes.MessagingDestinationName("topic"),
                       MessagingExperimentalAttributes.MessagingOperationName("send"),

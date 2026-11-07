@@ -59,7 +59,7 @@ multiple-record batches remain linked roots. Receive and commit behavior stays t
 
 ## Custom message keys
 
-Define `KafkaMessageKey` to include custom keys in `messaging.kafka.message.key`. Return `None` to omit a key.
+Define `KafkaMessageKey` to include custom keys in `kafka.message.key`. Return `None` to omit a key.
 
 When changing key types, use `tracedWithSerializers` to keep key attributes. Plain `withSerializers` keeps spans
 but stops deriving key attributes for the new type.

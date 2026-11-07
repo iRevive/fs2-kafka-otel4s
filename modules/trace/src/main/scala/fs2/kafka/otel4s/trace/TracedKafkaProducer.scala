@@ -104,8 +104,8 @@ trait TracedKafkaProducer[F[_], K, V] extends KafkaProducer.WithSettings[F, K, V
   /** Switches serializers while preserving tracing semantics for the new key type.
     *
     * Prefer this method over [[withSerializers]] when working with traced producers. It requires a new
-    * [[KafkaMessageKey]] instance so producer span attributes such as `messaging.kafka.message.key` can continue to be
-    * derived safely after the key type changes.
+    * [[KafkaMessageKey]] instance so producer span attributes such as `kafka.message.key` can continue to be derived
+    * safely after the key type changes.
     */
   def tracedWithSerializers[K2: KafkaMessageKey, V2](
       keySerializer: KeySerializer[F, K2],
@@ -116,7 +116,7 @@ trait TracedKafkaProducer[F[_], K, V] extends KafkaProducer.WithSettings[F, K, V
     *
     * This method exists because [[TracedKafkaProducer]] extends fs2-kafka's producer API, but it is not the preferred
     * traced path. After the key type changes, the implementation falls back to a no-op [[KafkaMessageKey]], so spans
-    * will continue to be emitted but `messaging.kafka.message.key` will no longer be derived automatically.
+    * will continue to be emitted but `kafka.message.key` will no longer be derived automatically.
     *
     * Use [[tracedWithSerializers]] instead when you want to preserve full traced-producer behavior.
     */

@@ -23,7 +23,10 @@ import fs2.kafka.consumer.KafkaConsumeChunk.CommitNow
 import org.typelevel.otel4s.oteljava.testkit.AttributesExpectation
 import org.typelevel.otel4s.Attributes
 import org.typelevel.otel4s.oteljava.testkit.trace._
-import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
+import org.typelevel.otel4s.semconv.experimental.attributes.{
+  KafkaExperimentalAttributes,
+  MessagingExperimentalAttributes
+}
 import org.typelevel.otel4s.trace.Tracer
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
 import org.apache.kafka.common.TopicPartition
@@ -133,8 +136,8 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
                     .client("poll topic")
                     .scopeName("fs2.kafka")
                     .attributesSubset(
-                      MessagingExperimentalAttributes.MessagingSystem(
-                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      MessagingExperimentalAttributes.MessagingSystemName(
+                        MessagingExperimentalAttributes.MessagingSystemNameValue.Kafka
                       ),
                       MessagingExperimentalAttributes.MessagingDestinationName("topic"),
                       MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
@@ -158,8 +161,8 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
                     .client("commit topic")
                     .scopeName("fs2.kafka")
                     .attributesSubset(
-                      MessagingExperimentalAttributes.MessagingSystem(
-                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      MessagingExperimentalAttributes.MessagingSystemName(
+                        MessagingExperimentalAttributes.MessagingSystemNameValue.Kafka
                       ),
                       MessagingExperimentalAttributes.MessagingDestinationName("topic"),
                       MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
@@ -210,7 +213,7 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
                         MessagingExperimentalAttributes.MessagingBatchMessageCount(2L)
                       )
                     )
-                    .matches(attributes) && attributes.get(MessagingExperimentalAttributes.MessagingKafkaOffset).isEmpty
+                    .matches(attributes) && attributes.get(KafkaExperimentalAttributes.KafkaOffset).isEmpty
                 })
             ),
             root(SpanExpectation.client("commit topic").scopeName("fs2.kafka"))
@@ -291,8 +294,8 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
                     .consumer("process topic")
                     .scopeName("fs2.kafka")
                     .attributesSubset(
-                      MessagingExperimentalAttributes.MessagingSystem(
-                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      MessagingExperimentalAttributes.MessagingSystemName(
+                        MessagingExperimentalAttributes.MessagingSystemNameValue.Kafka
                       ),
                       MessagingExperimentalAttributes.MessagingDestinationName("topic"),
                       MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
@@ -353,8 +356,8 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
                     .consumer("process topic")
                     .scopeName("fs2.kafka")
                     .attributesSubset(
-                      MessagingExperimentalAttributes.MessagingSystem(
-                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      MessagingExperimentalAttributes.MessagingSystemName(
+                        MessagingExperimentalAttributes.MessagingSystemNameValue.Kafka
                       ),
                       MessagingExperimentalAttributes.MessagingDestinationName("topic"),
                       MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
@@ -369,8 +372,8 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
                     .consumer("process topic")
                     .scopeName("fs2.kafka")
                     .attributesSubset(
-                      MessagingExperimentalAttributes.MessagingSystem(
-                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      MessagingExperimentalAttributes.MessagingSystemName(
+                        MessagingExperimentalAttributes.MessagingSystemNameValue.Kafka
                       ),
                       MessagingExperimentalAttributes.MessagingDestinationName("topic"),
                       MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
@@ -385,8 +388,8 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
                     .client("commit topic")
                     .scopeName("fs2.kafka")
                     .attributesSubset(
-                      MessagingExperimentalAttributes.MessagingSystem(
-                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      MessagingExperimentalAttributes.MessagingSystemName(
+                        MessagingExperimentalAttributes.MessagingSystemNameValue.Kafka
                       ),
                       MessagingExperimentalAttributes.MessagingDestinationName("topic"),
                       MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
@@ -534,8 +537,8 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
                     .consumer("process topic")
                     .scopeName("fs2.kafka")
                     .attributesSubset(
-                      MessagingExperimentalAttributes.MessagingSystem(
-                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      MessagingExperimentalAttributes.MessagingSystemName(
+                        MessagingExperimentalAttributes.MessagingSystemNameValue.Kafka
                       ),
                       MessagingExperimentalAttributes.MessagingDestinationName("topic"),
                       MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
@@ -543,8 +546,8 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
                       MessagingExperimentalAttributes.MessagingOperationType("process"),
                       MessagingExperimentalAttributes.MessagingClientId("consumer-client"),
                       MessagingExperimentalAttributes.MessagingConsumerGroupName("consumer-group"),
-                      MessagingExperimentalAttributes.MessagingKafkaMessageKey("key"),
-                      MessagingExperimentalAttributes.MessagingKafkaOffset(42L)
+                      KafkaExperimentalAttributes.KafkaMessageKey("key"),
+                      KafkaExperimentalAttributes.KafkaOffset(42L)
                     )
                     .noParentSpanContext
                     .links(
@@ -630,8 +633,8 @@ final class KafkaConsumerTracingSuite extends KafkaTracingTestSupport {
                     .client("poll topic")
                     .scopeName("fs2.kafka")
                     .attributesSubset(
-                      MessagingExperimentalAttributes.MessagingSystem(
-                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      MessagingExperimentalAttributes.MessagingSystemName(
+                        MessagingExperimentalAttributes.MessagingSystemNameValue.Kafka
                       ),
                       MessagingExperimentalAttributes.MessagingDestinationName("topic"),
                       MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),

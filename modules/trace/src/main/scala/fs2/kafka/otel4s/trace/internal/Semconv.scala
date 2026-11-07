@@ -31,7 +31,7 @@ import org.typelevel.otel4s.{Attribute, AttributeKey, Attributes}
 private[otel4s] object Semconv {
 
   object Const {
-    val MessagingSystem = Attribute("messaging.system", "kafka")
+    val MessagingSystem = Attribute("messaging.system.name", "kafka")
   }
 
   object Keys {
@@ -42,9 +42,9 @@ private[otel4s] object Semconv {
     val OperationType = AttributeKey[String]("messaging.operation.type")
     val ClientId = AttributeKey[String]("messaging.client.id")
     val ConsumerGroupName = AttributeKey[String]("messaging.consumer.group.name")
-    val KafkaMessageKey = AttributeKey[String]("messaging.kafka.message.key")
-    val KafkaMessageTombstone = AttributeKey[Boolean]("messaging.kafka.message.tombstone")
-    val KafkaOffset = AttributeKey[Long]("messaging.kafka.offset")
+    val KafkaMessageKey = AttributeKey[String]("kafka.message.key")
+    val KafkaMessageTombstone = AttributeKey[Boolean]("kafka.message.tombstone")
+    val KafkaOffset = AttributeKey[Long]("kafka.offset")
     val BatchMessageCount = AttributeKey[Long]("messaging.batch.message_count")
 
   }
@@ -80,7 +80,7 @@ private[otel4s] object Semconv {
       Keys.DestinationPartitionId.maybe(producerSingleLogicalPartition(records).map(_.toString))
     )
 
-    // `messaging.kafka.message.key` applies only to single-message Kafka operations. Tombstone applies
+    // `kafka.message.key` applies only to single-message Kafka operations. Tombstone applies
     // to a batch span when every record is a tombstone; mixed values remain on per-record links.
     // See:
     // https://opentelemetry.io/docs/specs/semconv/messaging/messaging-spans/

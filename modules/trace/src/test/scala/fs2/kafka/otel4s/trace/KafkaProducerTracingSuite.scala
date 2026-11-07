@@ -31,7 +31,10 @@ import org.typelevel.otel4s.oteljava.testkit.trace.{
 }
 import org.typelevel.otel4s.context.propagation.TextMapGetter
 import org.typelevel.otel4s.semconv.attributes.ServerAttributes
-import org.typelevel.otel4s.semconv.experimental.attributes.MessagingExperimentalAttributes
+import org.typelevel.otel4s.semconv.experimental.attributes.{
+  KafkaExperimentalAttributes,
+  MessagingExperimentalAttributes
+}
 import org.typelevel.otel4s.trace.SpanFinalizer
 import org.typelevel.otel4s.Attributes
 
@@ -73,14 +76,14 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
                     .producer("send topic")
                     .scopeName("fs2.kafka")
                     .attributesSubset(
-                      MessagingExperimentalAttributes.MessagingSystem(
-                        MessagingExperimentalAttributes.MessagingSystemValue.Kafka
+                      MessagingExperimentalAttributes.MessagingSystemName(
+                        MessagingExperimentalAttributes.MessagingSystemNameValue.Kafka
                       ),
                       MessagingExperimentalAttributes.MessagingDestinationName("topic"),
                       MessagingExperimentalAttributes.MessagingOperationName("send"),
                       MessagingExperimentalAttributes.MessagingOperationType("send"),
                       MessagingExperimentalAttributes.MessagingClientId("producer-client"),
-                      MessagingExperimentalAttributes.MessagingKafkaMessageKey("key")
+                      KafkaExperimentalAttributes.KafkaMessageKey("key")
                     )
                 )
               )
@@ -162,7 +165,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
                     .scopeName("fs2.kafka")
                     .attributesSubset(
                       MessagingExperimentalAttributes.MessagingDestinationPartitionId("0"),
-                      MessagingExperimentalAttributes.MessagingKafkaOffset(42L)
+                      KafkaExperimentalAttributes.KafkaOffset(42L)
                     )
                 )
               )
@@ -180,7 +183,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
       KafkaTracerTestkit.create().use { testkit =>
         val configured = Attributes(
           MessagingExperimentalAttributes.MessagingDestinationPartitionId("5"),
-          MessagingExperimentalAttributes.MessagingKafkaOffset(100L)
+          KafkaExperimentalAttributes.KafkaOffset(100L)
         )
         val config = source match {
           case "constant" => KafkaTracer.Config.default.withConstAttributes(configured)
@@ -189,7 +192,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
               .withConstAttributes(
                 Attributes(
                   MessagingExperimentalAttributes.MessagingDestinationPartitionId("4"),
-                  MessagingExperimentalAttributes.MessagingKafkaOffset(99L)
+                  KafkaExperimentalAttributes.KafkaOffset(99L)
                 )
               )
               .withSendSpanSetup(_ =>
@@ -229,8 +232,8 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
                     attributes
                       .get(MessagingExperimentalAttributes.MessagingDestinationPartitionId)
                       .contains(MessagingExperimentalAttributes.MessagingDestinationPartitionId(partition)) &&
-                    attributes.get(MessagingExperimentalAttributes.MessagingKafkaOffset) ==
-                      offset.map(MessagingExperimentalAttributes.MessagingKafkaOffset(_))
+                    attributes.get(KafkaExperimentalAttributes.KafkaOffset) ==
+                      offset.map(KafkaExperimentalAttributes.KafkaOffset(_))
                   }
                 )
             )
@@ -277,7 +280,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
                       AttributesExpectation.where(
                         "must keep tombstone detail off the batch span"
                       )(
-                        _.get(MessagingExperimentalAttributes.MessagingKafkaMessageTombstone).isEmpty
+                        _.get(KafkaExperimentalAttributes.KafkaMessageTombstone).isEmpty
                       )
                     )
                     .links(
@@ -289,7 +292,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
                         LinkExpectation.any
                           .attributesSubset(
                             MessagingExperimentalAttributes.MessagingDestinationName("topic-b"),
-                            MessagingExperimentalAttributes.MessagingKafkaMessageTombstone(true)
+                            KafkaExperimentalAttributes.KafkaMessageTombstone(true)
                           )
                       )
                     )
@@ -325,7 +328,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
                     .client("send topic")
                     .scopeName("fs2.kafka")
                     .attributesSubset(
-                      MessagingExperimentalAttributes.MessagingKafkaMessageTombstone(true)
+                      KafkaExperimentalAttributes.KafkaMessageTombstone(true)
                     )
                 )
               )
@@ -737,7 +740,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
       }
   }
 
-  test("single-message send omits messaging.kafka.message.key for null and unrepresentable keys") {
+  test("single-message send omits kafka.message.key for null and unrepresentable keys") {
     KafkaTracerTestkit
       .create()
       .use { testkit =>
@@ -772,7 +775,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
                     .scopeName("fs2.kafka")
                     .attributes(
                       AttributesExpectation.where("must omit message key for null keys")(
-                        _.get(MessagingExperimentalAttributes.MessagingKafkaMessageKey).isEmpty
+                        _.get(KafkaExperimentalAttributes.KafkaMessageKey).isEmpty
                       )
                     )
                 ),
@@ -784,7 +787,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
                       AttributesExpectation.where(
                         "must omit message key for unrepresentable keys"
                       )(
-                        _.get(MessagingExperimentalAttributes.MessagingKafkaMessageKey).isEmpty
+                        _.get(KafkaExperimentalAttributes.KafkaMessageKey).isEmpty
                       )
                     )
                 )
@@ -795,7 +798,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
       }
   }
 
-  test("single-message send emits messaging.kafka.message.tombstone for null values") {
+  test("single-message send emits kafka.message.tombstone for null values") {
     KafkaTracerTestkit
       .create()
       .use { testkit =>
@@ -815,7 +818,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
                     .producer("send topic")
                     .scopeName("fs2.kafka")
                     .attributesSubset(
-                      MessagingExperimentalAttributes.MessagingKafkaMessageTombstone(true)
+                      KafkaExperimentalAttributes.KafkaMessageTombstone(true)
                     )
                 )
               )
@@ -856,7 +859,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
                     .producer("send topic")
                     .scopeName("fs2.kafka")
                     .attributesSubset(
-                      MessagingExperimentalAttributes.MessagingKafkaMessageKey("wrapped:key")
+                      KafkaExperimentalAttributes.KafkaMessageKey("wrapped:key")
                     )
                 )
               )
@@ -894,7 +897,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
                       AttributesExpectation.where(
                         "must omit message key after withSerializers changes the key type"
                       )(
-                        _.get(MessagingExperimentalAttributes.MessagingKafkaMessageKey).isEmpty
+                        _.get(KafkaExperimentalAttributes.KafkaMessageKey).isEmpty
                       )
                     )
                 )

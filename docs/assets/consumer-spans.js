@@ -80,7 +80,7 @@
       const derived = Object.create(null);
       function attr(key, value, type) { derived[key] = { key, value: String(value), type: type || "string", source: "Record / client metadata" }; }
       if (!app) {
-        attr("messaging.system", "kafka");
+        attr("messaging.system.name", "kafka");
         attr("messaging.operation.name", operation === "receive" ? "poll" : operation.startsWith("process") ? "process" : "commit");
         attr("messaging.operation.type", operation === "receive" ? "receive" : operation.startsWith("process") ? "process" : "settle");
         attr("messaging.destination.name", state.topic);
@@ -89,8 +89,8 @@
         attr("messaging.consumer.group.name", state.groupId);
         const attributeIndex = recordIndex === undefined && count === 1 && !(stream && operation === "commit") ? 0 : recordIndex;
         if (attributeIndex !== undefined) {
-          attr("messaging.kafka.message.key", `m${attributeIndex + 1}`);
-          attr("messaging.kafka.offset", attributeIndex + 1, "long");
+          attr("kafka.message.key", `m${attributeIndex + 1}`);
+          attr("kafka.offset", attributeIndex + 1, "long");
           if (operation === "process batch") attr("messaging.batch.message_count", count, "long");
         } else if (!(stream && operation === "commit")) attr("messaging.batch.message_count", count, "long");
       }
