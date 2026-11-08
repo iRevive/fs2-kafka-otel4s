@@ -21,6 +21,7 @@ import fs2.Chunk
 import fs2.kafka.{ConsumerRecord, Header, Headers, ProducerRecord}
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator
 import io.opentelemetry.context.propagation.TextMapPropagator
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.{Attribute, Attributes}
 import org.typelevel.otel4s.oteljava.testkit.trace.{
   LinkExpectation,
@@ -125,6 +126,7 @@ final class ProcessSpanRelationshipSuite extends KafkaTracingTestSupport {
   } test(s"missing or invalid context stays root under ambient span: $headers, batch=$singletonBatch") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val provider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       for {
         tracer <- KafkaTracer.create[IO](config)
         spans = tracer.consumerSpans(ConsumerMetadata.Provider.constant[IO](ConsumerMetadata(None, None)))
@@ -149,6 +151,7 @@ final class ProcessSpanRelationshipSuite extends KafkaTracingTestSupport {
   test("multiple-record batches and receives stay linked roots, including repeated message contexts") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val provider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       val incoming = record.withHeaders(propagators.head._3)
       val records = Chunk(incoming, incoming)
       for {
@@ -209,6 +212,7 @@ final class ProcessSpanRelationshipSuite extends KafkaTracingTestSupport {
   test("explicit Link restores root processing and disabled spans preserve ambient context") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val provider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       val incoming = record.withHeaders(propagators.head._3)
       val metadata = ConsumerMetadata.Provider.constant[IO](ConsumerMetadata(None, None))
       for {
@@ -251,6 +255,7 @@ final class ProcessSpanRelationshipSuite extends KafkaTracingTestSupport {
   test("relationship can vary by topic independently for record and batch setup") {
     KafkaTracerTestkit.create().use { testkit =>
       implicit val provider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
       val perTopic = KafkaTracer.Config.default
         .withProcessSpanSetup { ctx =>
           KafkaTracer.Config.Defaults.processSpanSetup(ctx).map { setup =>

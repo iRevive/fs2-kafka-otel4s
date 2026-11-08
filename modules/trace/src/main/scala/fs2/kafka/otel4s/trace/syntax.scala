@@ -22,6 +22,7 @@ import fs2.{Chunk, Stream}
 import fs2.kafka.KafkaProducer
 import fs2.kafka.consumer.KafkaConsumeChunk.CommitNow
 import fs2.kafka.{CommittableConsumerRecord, ConsumerRecord, KafkaConsumer}
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.trace.TracerProvider
 
 /** Local syntax for explicitly traced consumer chunk and record boundaries.
@@ -156,7 +157,8 @@ trait KafkaConsumerStreamTracingSyntax {
     )(implicit
         ev: KafkaMessageKey[K],
         F: Concurrent[F],
-        TP: TracerProvider[F]
+        TP: TracerProvider[F],
+        CM: ContextManager[F]
     ): Stream[F, TracedKafkaConsumer[F, K, V]] =
       Stream
         .eval(KafkaTracer.create[F](config))
@@ -351,7 +353,8 @@ trait KafkaProducerStreamTracingSyntax {
     )(implicit
         ev: KafkaMessageKey[K],
         F: Concurrent[F],
-        TP: TracerProvider[F]
+        TP: TracerProvider[F],
+        CM: ContextManager[F]
     ): Stream[F, TracedKafkaProducer[F, K, V]] =
       Stream
         .eval(KafkaTracer.create[F](config))
@@ -395,7 +398,8 @@ trait KafkaProducerTracingSyntax {
     )(implicit
         ev: KafkaMessageKey[K],
         F: Concurrent[F],
-        TP: TracerProvider[F]
+        TP: TracerProvider[F],
+        CM: ContextManager[F]
     ): F[TracedKafkaProducer[F, K, V]] =
       KafkaTracer
         .create[F](config)

@@ -20,6 +20,7 @@ import cats.effect.IO
 import fs2.Stream
 import fs2.kafka._
 import fs2.kafka.otel4s.trace.syntax._
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.trace.TracerProvider
 
 final class KafkaProducerSyntaxSuite extends KafkaTracingTestSupport {
@@ -28,6 +29,7 @@ final class KafkaProducerSyntaxSuite extends KafkaTracingTestSupport {
     KafkaTracerTestkit.create().use { testkit =>
       val producer = StubKafkaProducer.metadataOnly[String, String]()
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
 
       for {
         tracer <- KafkaTracer.create[IO](KafkaTracer.Config.default)
@@ -43,6 +45,7 @@ final class KafkaProducerSyntaxSuite extends KafkaTracingTestSupport {
     KafkaTracerTestkit.create().use { testkit =>
       val producer = StubKafkaProducer.metadataOnly[String, String]()
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
 
       producer
         .traced(KafkaTracer.Config.default)
@@ -87,6 +90,7 @@ final class KafkaProducerSyntaxSuite extends KafkaTracingTestSupport {
       val underlying = StubKafkaProducer.metadataOnly[String, String]()
 
       implicit val tracerProvider: TracerProvider[IO] = testkit.tracerProvider
+      implicit val contextManager: ContextManager[IO] = testkit.contextManager
 
       for {
         traced <- Stream

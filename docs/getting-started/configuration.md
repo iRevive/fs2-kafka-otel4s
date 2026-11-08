@@ -93,11 +93,12 @@ tracer can also be passed to `.traced(kafkaTracer)` in stream syntax.
 import cats.effect.Resource
 import fs2.kafka.{ConsumerSettings, KafkaConsumer, KafkaProducer, ProducerSettings}
 import fs2.kafka.otel4s.trace.TracedKafkaConsumer
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.trace.TracerProvider
 
 def createTracedProducer(
     producerSettings: ProducerSettings[IO, String, String]
-)(implicit tracerProvider: TracerProvider[IO]): Resource[IO, TracedKafkaProducer[IO, String, String]] =
+)(implicit contextManager: ContextManager[IO], tracerProvider: TracerProvider[IO]): Resource[IO, TracedKafkaProducer[IO, String, String]] =
   for {
     kafkaTracer <- KafkaTracer.resource[IO](tracerConfig)
     producer <- KafkaProducer.resource[IO, String, String](producerSettings)
@@ -105,7 +106,7 @@ def createTracedProducer(
 
 def createTracedConsumer(
     consumerSettings: ConsumerSettings[IO, String, String]
-)(implicit tracerProvider: TracerProvider[IO]): Resource[IO, TracedKafkaConsumer[IO, String, String]] =
+)(implicit contextManager: ContextManager[IO], tracerProvider: TracerProvider[IO]): Resource[IO, TracedKafkaConsumer[IO, String, String]] =
   for {
     kafkaTracer <- KafkaTracer.resource[IO](tracerConfig)
     consumer <- KafkaConsumer.resource[IO, String, String](consumerSettings)
@@ -123,3 +124,25 @@ For commits, use metadata from the consumer that produced the offsets. Use `Cons
 when its identity is unavailable.
 
 The commit batching method requires `Temporal` for timed flushes and derives `Parallel` internally for separate committers.
+
+## Producer acknowledgment
+
+`KafkaTracer.create`, `KafkaTracer.resource`, and `.traced(config)` require an implicit
+`ContextManager[F]` and `TracerProvider[F]`. Get both from the same otel4s instance:
+
+```scala
+implicit val tracerProvider: TracerProvider[IO] = otel4s.tracerProvider
+implicit val contextManager: ContextManager[IO] = otel4s.contextManager
+```
+
+For nonempty input, the producer captures the current context before sending records.
+Acknowledgment and its finalizers run with that context: the send span, if enabled,
+baggage, and custom values. This works even if acknowledgment runs later in another
+fiber. Each submission keeps its own context, and the caller's context is restored
+after success, failure, or cancellation.
+
+The same rules apply to `ProducerSpans` and when send spans are disabled. Empty inputs
+and no-op handles skip context capture.
+
+Context capture leaves header propagation and application span lifetimes unchanged.
+Run the returned acknowledgment effect, usually with `.flatten`, to finish the send span.

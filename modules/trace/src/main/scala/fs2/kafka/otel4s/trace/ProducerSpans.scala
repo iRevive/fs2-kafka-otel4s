@@ -22,6 +22,7 @@ import cats.syntax.all._
 import fs2.kafka._
 import fs2.kafka.otel4s.trace.instances._
 import fs2.kafka.otel4s.trace.internal.Semconv
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.Attributes
 import org.typelevel.otel4s.trace._
 
@@ -43,6 +44,11 @@ sealed trait ProducerSpans[F[_]] {
     * through the supplied provider. Generated create spans cover each record's preparation and header injection, ending
     * before submission; their contexts remain available for propagation and send links. Transaction orchestration
     * belongs to the caller or [[TracedKafkaProducer]].
+    *
+    * For nonempty input, acknowledgment and its finalizers run with the context captured before sending: the send span,
+    * if enabled, baggage, and custom values. This also works when send spans are disabled or acknowledgment runs in
+    * another fiber. The caller's context is restored after success, failure, or cancellation. Empty inputs and noop
+    * handles skip context capture.
     */
   def produce[K: KafkaMessageKey, V](records: ProducerRecords[K, V])(
       send: ProducerRecords[K, V] => F[F[ProducerResult[K, V]]]
@@ -52,7 +58,7 @@ sealed trait ProducerSpans[F[_]] {
 
 private[trace] object ProducerSpans {
 
-  def apply[F[_]: MonadCancelThrow: Tracer](
+  def apply[F[_]: MonadCancelThrow: Tracer: ContextManager](
       metadata: ProducerMetadata.Provider[F],
       config: KafkaTracer.Config
   ): Impl[F] = new Impl(metadata, config)
@@ -65,7 +71,7 @@ private[trace] object ProducerSpans {
     ): F[F[ProducerResult[K, V]]] = send(records)
   }
 
-  private[trace] final class Impl[F[_]: MonadCancelThrow: Tracer](
+  private[trace] final class Impl[F[_]: MonadCancelThrow: Tracer: ContextManager](
       metadata: ProducerMetadata.Provider[F],
       config: KafkaTracer.Config
   ) extends ProducerSpans[F] {
@@ -97,7 +103,9 @@ private[trace] object ProducerSpans {
             val spanContext = Semconv.sendSpanContext(prepared.records, clientId)
             val spanSetup = config.sendSpanSetup(spanContext)
 
-            spanSetup.fold(producePrepared(prepared)(send)) { setup =>
+            spanSetup.fold(ContextManager[F].captureScope.flatMap { restore =>
+              producePrepared(prepared)(send).map(await => restore(await))
+            }) { setup =>
               val span = Tracer[F]
                 .spanBuilder(setup.spanName)
                 .withSpanKind(prepared.sendKind)
@@ -117,22 +125,27 @@ private[trace] object ProducerSpans {
               MonadCancelThrow[F].uncancelable { poll =>
                 span.resource.allocatedCase
                   .flatMap { case (res, release) =>
-                    poll(res.trace(producePrepared(prepared)(send)))
-                      .guaranteeCase {
-                        case Outcome.Succeeded(_) => MonadCancelThrow[F].unit
-                        case Outcome.Errored(e)   => release(Resource.ExitCase.Errored(e))
-                        case Outcome.Canceled()   => release(Resource.ExitCase.Canceled)
-                      }
-                      .map { awaitResult =>
-                        res
-                          .trace(awaitResult)
-                          .flatTap { result =>
-                            res.span.addAttributes(Semconv.sendResultAttributes(result))
-                          }
+                    res
+                      .trace(ContextManager[F].captureScope)
+                      .flatMap { restore =>
+                        poll(restore(producePrepared(prepared)(send)))
                           .guaranteeCase {
-                            case Outcome.Succeeded(_) => release(Resource.ExitCase.Succeeded)
-                            case Outcome.Errored(e)   => release(Resource.ExitCase.Errored(e))
-                            case Outcome.Canceled()   => release(Resource.ExitCase.Canceled)
+                            case Outcome.Succeeded(_) => MonadCancelThrow[F].unit
+                            case Outcome.Errored(e)   => restore(release(Resource.ExitCase.Errored(e)))
+                            case Outcome.Canceled()   => restore(release(Resource.ExitCase.Canceled))
+                          }
+                          .map { awaitResult =>
+                            restore(
+                              awaitResult
+                                .flatTap { result =>
+                                  res.span.addAttributes(Semconv.sendResultAttributes(result))
+                                }
+                                .guaranteeCase {
+                                  case Outcome.Succeeded(_) => release(Resource.ExitCase.Succeeded)
+                                  case Outcome.Errored(e)   => release(Resource.ExitCase.Errored(e))
+                                  case Outcome.Canceled()   => release(Resource.ExitCase.Canceled)
+                                }
+                            )
                           }
                       }
                   }

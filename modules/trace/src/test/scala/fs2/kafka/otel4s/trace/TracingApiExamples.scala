@@ -21,12 +21,13 @@ import fs2.kafka.KafkaConsumer
 import fs2.kafka.KafkaConsumer._
 import fs2.kafka.{ConsumerRecord, ConsumerSettings}
 import fs2.kafka.otel4s.trace.{ConsumerMetadata, KafkaMessageKey, KafkaTracer}
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.trace.TracerProvider
 
 /** Compile-checked examples of the intended consumer API imports and call shapes. */
 private[trace] object TracingApiExamples {
 
-  def highLevelWithConfig[F[_]: Async: TracerProvider, K: KafkaMessageKey, V](
+  def highLevelWithConfig[F[_]: Async: TracerProvider: ContextManager, K: KafkaMessageKey, V](
       settings: ConsumerSettings[F, K, V],
       config: KafkaTracer.Config,
       handle: ConsumerRecord[K, V] => F[Unit]

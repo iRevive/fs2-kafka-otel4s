@@ -7,6 +7,7 @@ import cats.effect.IO
 import fs2.Stream
 import fs2.kafka.otel4s.trace.KafkaTracer
 import fs2.kafka.otel4s.trace.syntax._
+import org.typelevel.otel4s.context.ContextManager
 import org.typelevel.otel4s.trace.TracerProvider
 import fs2.kafka.{KafkaProducer, ProducerRecord, ProducerRecords, ProducerResult, ProducerSettings, Serializer}
 
@@ -21,7 +22,7 @@ val producerSettings: ProducerSettings[IO, String, String] =
     .withBootstrapServers("localhost:9092")
     .withClientId("orders-producer")
 
-def sendOrder(implicit tracerProvider: TracerProvider[IO]): IO[ProducerResult[String, String]] =
+def sendOrder(implicit contextManager: ContextManager[IO], tracerProvider: TracerProvider[IO]): IO[ProducerResult[String, String]] =
   Stream
     .resource(KafkaProducer.resource[IO, String, String](producerSettings))
     .traced(tracerConfig)
