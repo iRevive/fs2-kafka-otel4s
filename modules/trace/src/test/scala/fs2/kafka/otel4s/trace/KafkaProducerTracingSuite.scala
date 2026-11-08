@@ -628,7 +628,7 @@ final class KafkaProducerTracingSuite extends KafkaTracingTestSupport {
       .create()
       .use { testkit =>
         val bootstrapServers = "kafka-1.internal:9092,kafka-2.internal:9092"
-        val config = KafkaTracer.Config.default.withServerAddress(bootstrapServers)
+        val config = KafkaTracer.Config.default.withBootstrapServers(bootstrapServers)
 
         for {
           producer <- StubKafkaProducer.recorder[String, String]()
