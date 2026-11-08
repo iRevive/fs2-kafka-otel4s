@@ -176,7 +176,7 @@ object KafkaTracer {
     /** Adds `server.address` and, when provided, `server.port` to emitted spans.
       *
       * Use values derived from the logical Kafka broker or service address, not connection-level peer information. For
-      * a Kafka `bootstrap.servers` value, use the one-argument overload; it uses the first broker and extracts its port
+      * a Kafka `bootstrap.servers` value, use [[withBootstrapServers]]; it uses the first broker and extracts its port
       * when present.
       *
       * @example
@@ -194,10 +194,10 @@ object KafkaTracer {
       *
       * @example
       *   {{{
-      * val config = KafkaTracer.Config.default.withServerAddress("kafka-1:9092,kafka-2:9092")
+      * val config = KafkaTracer.Config.default.withBootstrapServers("kafka-1:9092,kafka-2:9092")
       *   }}}
       */
-    def withServerAddress(bootstrapServers: String): Config =
+    def withBootstrapServers(bootstrapServers: String): Config =
       Config.parseBootstrapServers(bootstrapServers) match {
         case Some((serverAddress, serverPort)) => withServerAddress(serverAddress, serverPort)
         case None                              => this
@@ -449,8 +449,7 @@ object KafkaTracer {
     * The returned tracer is not yet bound to a specific Kafka producer. Bind it to a [[fs2.kafka.KafkaProducer]] so the
     * resulting spans can include static client metadata such as `client.id`. If you want to attach logical broker
     * endpoint attributes such as `server.address` and `server.port`, provide them explicitly through
-    * [[KafkaTracer.Config.withServerAddress(serverAddress:String,serverPort:Option[Int])*]] or
-    * [[KafkaTracer.Config.withServerAddress(bootstrapServers:String)*]].
+    * [[KafkaTracer.Config.withServerAddress]] or [[KafkaTracer.Config.withBootstrapServers]].
     */
   def create[F[_]: Concurrent: TracerProvider](
       config: Config
@@ -468,8 +467,7 @@ object KafkaTracer {
     * The returned tracer is not yet bound to a specific Kafka producer. Bind it to a [[fs2.kafka.KafkaProducer]] so the
     * resulting spans can include static client metadata such as `client.id`. If you want to attach logical broker
     * endpoint attributes such as `server.address` and `server.port`, provide them explicitly through
-    * [[KafkaTracer.Config.withServerAddress(serverAddress:String,serverPort:Option[Int])*]] or
-    * [[KafkaTracer.Config.withServerAddress(bootstrapServers:String)*]]
+    * [[KafkaTracer.Config.withServerAddress]] or [[KafkaTracer.Config.withBootstrapServers]]
     */
   def resource[F[_]: Concurrent: TracerProvider](
       config: Config
